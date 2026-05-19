@@ -1,0 +1,39 @@
+settings:
+  tweaks:
+    items:
+      multiace:
+        label: multiACE (Multi-ACE-Pro support)
+        description: >
+          Adds multi-ACE support to Klipper: up to 4 Anycubic ACE Pro
+          filament changers, in-print colour swaps, cross-ACE feed-assist,
+          hardened load/unload recovery, RFID + manual filament handling,
+          per-ACE dryer control, Snapshot/Loadout system, post-process
+          toolchanger remap. Optional Web UI via SSH `bash
+          /home/lava/multiace/install_web.sh`.
+        help_url: https://github.com/decay71/multiACE
+        get_cmd:
+          - bash
+          - -c
+          - test -f /oem/printer_data/config/extended/klipper/multiace.cfg && echo "enabled" || echo "disabled"
+        options:
+          enabled:
+            label: Enabled
+            confirm: "Enable multiACE? Requires up to 4 ACE Pro devices connected via USB. Klipper restarts after enabling."
+            cmd:
+              - bash
+              - -xc
+              - |
+                ln -sf /usr/local/share/firmware-config/tweaks/klipper/multiace.cfg \
+                       /oem/printer_data/config/extended/klipper/multiace.cfg &&
+                echo "multiACE enabled. Restarting Klipper..." &&
+                /etc/init.d/S60klipper restart
+          disabled:
+            label: Disabled
+            cmd:
+              - bash
+              - -xc
+              - |
+                rm -vf /oem/printer_data/config/extended/klipper/multiace.cfg &&
+                echo "multiACE disabled. Restarting Klipper..." &&
+                /etc/init.d/S60klipper restart
+        default: enabled
