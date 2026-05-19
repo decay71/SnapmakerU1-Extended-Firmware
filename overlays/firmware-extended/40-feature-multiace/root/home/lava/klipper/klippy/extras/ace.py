@@ -2780,17 +2780,19 @@ class MultiAce:
                                     push_color = self.rgb2hex(*slot.get('color', (0, 0, 0)))
                                     push_vendor = slot.get('brand', 'Generic')
                                     push_subtype = ''
+                                want_type = push_type or ''
+                                want_vendor = push_vendor or ''
+                                want_color = (push_color or '').upper()
                                 for head in target_heads:
                                     cur_type = ptc_types[head] if head < len(ptc_types) else ''
                                     cur_vendor = ptc_vendors[head] if head < len(ptc_vendors) else ''
-                                    cur_color = ptc_rgbas[head] if head < len(ptc_rgbas) else ''
-                                    needs_heal = cur_type in ('', 'NONE') or cur_vendor in ('', 'NONE')
-                                    if (override is not None
-                                            and (cur_type != push_type
-                                                 or cur_vendor != push_vendor
-                                                 or (cur_color or '').upper() != (push_color or '').upper())):
-
-                                        needs_heal = True
+                                    cur_color = (ptc_rgbas[head] if head < len(ptc_rgbas) else '') or ''
+                                    cur_color_cmp = cur_color.upper()
+                                    if len(cur_color_cmp) == 8:
+                                        cur_color_cmp = cur_color_cmp[:6]
+                                    needs_heal = (cur_type != want_type
+                                                  or cur_vendor != want_vendor
+                                                  or cur_color_cmp != want_color)
                                     if needs_heal:
                                         logging.info(
                                             '[multiACE] display heal: head %d was "%s"/"%s"/%s, repushing %s/%s/%s' % (
