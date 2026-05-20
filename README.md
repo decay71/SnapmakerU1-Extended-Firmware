@@ -12,7 +12,7 @@ git clone https://github.com/decay71/SnapmakerU1-Extended-Firmware
 cd SnapmakerU1-Extended-Firmware
 sudo ./dev.sh make PROFILE=extended build
 
-
+```
 
 ## ℹ️ A quick note before you flash
 
