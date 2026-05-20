@@ -162,7 +162,7 @@ def check_material_availability(filament_types, live_slots):
     """Pre-check before matching. Returns sorted list of materials that
     the slicer needs (per `filament_types`) but that aren't loaded in
     any slot on the printer. An empty list means every required
-    material has at least one slot available — matching can proceed
+    material has at least one slot available - matching can proceed
     even if individual colours fall back."""
     loaded = set()
     for s in live_slots or []:
@@ -251,7 +251,7 @@ def match_colors_to_slots(color_names, live_slots, num_heads=4,
     still-unmatched slicer T-index globally before any later tier
     runs. That prevents the greedy-per-T failure mode where T0
     (Blue) grabs the only DarkBlue slot via the name_base fallback,
-    leaving T1 (DarkBlue) — which would have matched exact_hex —
+    leaving T1 (DarkBlue) - which would have matched exact_hex -
     stuck on a worse tier.
 
     Tier order:
@@ -477,7 +477,7 @@ def parse_filament_types(gcode):
 def parse_color_names(gcode):
     """Best-effort lookup table T-index -> color name. Orca writes
     the filament_colour line at the end of the gcode, Bambu/Prusa
-    often near the top — scan both."""
+    often near the top - scan both."""
     names = {}
     all_lines = gcode.splitlines()
     scan = all_lines[:300] + all_lines[-2000:]
@@ -758,7 +758,7 @@ def _suggest_layer_friendly_remap(layer_colors, num_aces):
 
 def compute_swap_aware_layout(events, num_aces, num_heads=4,
                               layer_color_sets=None):
-    """Search head assignments per color (free distribution — colors
+    """Search head assignments per color (free distribution - colors
     are NOT bound to head=T%4) for the one that minimizes the runtime
     swap count.
 
@@ -845,8 +845,8 @@ def compute_layer_swap_plan(body_gcode, num_aces=4):
     `num_aces` physical ACE units.
 
     Walks the body gcode layer-by-layer (;LAYER_CHANGE markers), tracks
-    the set of distinct colors active within each layer, then — if every
-    layer fits in 4 slots — runs a budget-aware Belady cache-replacement
+    the set of distinct colors active within each layer, then - if every
+    layer fits in 4 slots - runs a budget-aware Belady cache-replacement
     that prefers to spread swaps across heads so no head's ACE index
     exceeds num_aces - 1.
 
@@ -943,7 +943,7 @@ def compute_layer_swap_plan(body_gcode, num_aces=4):
 
     def simulate(fixed_initial):
         """Strict-c%4 simulator. Each color c lives on head c%4 (its
-        physical destination — ACE c//4 / Slot c%4 feeds head c%4).
+        physical destination - ACE c//4 / Slot c%4 feeds head c%4).
         No free choice of head: when a layer needs c and head c%4 is
         occupied by another color c', evict c' and load c. If c' is
         also needed in the same layer (= layer uses two colors with
@@ -954,7 +954,7 @@ def compute_layer_swap_plan(body_gcode, num_aces=4):
         Each color is loaded into its slicer-canonical ACE position
         (c // 4). Feasibility: c // 4 must be < num_aces. Distinct
         colors per head (= aces_needed) is the count that matters,
-        not the total number of swaps — the same two colors can
+        not the total number of swaps - the same two colors can
         cycle on a head infinitely with only 2 ACE slots.
 
         Returns (swaps, aces_needed, events, color_slots,
@@ -1108,7 +1108,7 @@ def apply_remap(gcode, remap):
     M104/M109 T<n> heater commands and SM_PRINT_PREEXTRUDE_FILAMENT
     INDEX=<n>. The `; Change Tool<a> -> Tool<b>` comments are left
     untouched so they remain the canonical source of the original
-    slicer tool indices — this keeps the analyzer/optimizer idempotent
+    slicer tool indices - this keeps the analyzer/optimizer idempotent
     across repeated runs on the same file. The downstream rewrite()
     logic only uses those comments as split markers and doesn't care
     about the numbers.
@@ -1148,7 +1148,7 @@ def apply_layer_remap(gcode, layer_info):
     that toolchange block to T<head + 4*ace>. The downstream rewrite()
     step then emits ACE_SWAP_HEAD with HEAD=head SLOT=head ACE=ace, and
     its built-in skip logic marks the ~115 non-swap toolchanges as
-    `; skipped (already loaded)` — leaving only the Belady-optimal
+    `; skipped (already loaded)` - leaving only the Belady-optimal
     swaps as real filament changes.
 
     Returns (rewritten_gcode, physical_loadout) where physical_loadout
@@ -1371,10 +1371,10 @@ def print_recommendation(result, num_aces, file=None):
                 layer_info['layer_swaps'],
                 layer_info['layer_swaps'] * 3.8))
             if fits:
-                p('  ACEs needed: %d (you have %d — fits)' % (
+                p('  ACEs needed: %d (you have %d - fits)' % (
                     aces_needed, num_aces))
             else:
-                p('  ACEs needed: %d (you have %d — DOES NOT FIT, --layer will be skipped)' % (
+                p('  ACEs needed: %d (you have %d - DOES NOT FIT, --layer will be skipped)' % (
                     aces_needed, num_aces))
             preload = layer_info.get('initial_loadout') or {}
             if preload:
@@ -1399,7 +1399,7 @@ def print_recommendation(result, num_aces, file=None):
             reason = layer_info.get('reason')
             detail = layer_info.get('reason_detail', '')
             if reason == 'too_many_colors':
-                p('  Feasible: NO  (%s — needs mid-layer swaps)' % detail)
+                p('  Feasible: NO  (%s - needs mid-layer swaps)' % detail)
             elif reason == 'head_conflict':
                 p('  Feasible: NO  (%s)' % detail)
                 p('    Each head N can only hold one color at a time;')
@@ -1438,13 +1438,13 @@ def inject_auto_load(gcode):
     Use case: replace the manual preload step before a multi-color
     print. The slicer's start gcode emits heating + G28 + bed leveling
     (and a bare T<initial_extruder> command for heater selection that
-    can come BEFORE G28 — that's why we don't inject before the first
+    can come BEFORE G28 - that's why we don't inject before the first
     T).
 
     Injection-point fallback chain (highest priority first):
 
       1. Right BEFORE the first SM_PRINT_PREEXTRUDE_FILAMENT line.
-         This is Snapmaker's stock prime move — it lives AFTER G28 +
+         This is Snapmaker's stock prime move - it lives AFTER G28 +
          M109 in the slicer's start gcode and BEFORE the first body
          move. It also extrudes from the initial tool, so the initial
          tool's filament must be loaded by then or the runout sensor
@@ -1454,7 +1454,7 @@ def inject_auto_load(gcode):
 
       2. Right BEFORE the first '; Change Tool X -> Tool Y' marker
          (Orca multi-tool prints). This anchor is the boundary between
-         start_gcode and the print body — but it is AFTER any prior
+         start_gcode and the print body - but it is AFTER any prior
          SM_PRINT_PREEXTRUDE_FILAMENT, which is why it is fallback 2,
          not 1.
 
@@ -1462,7 +1462,7 @@ def inject_auto_load(gcode):
          single-color prints where rewrite() generated swaps.
 
     cmd_ACE_SWAP_HEAD's empty-head detection (ace.py) makes this work
-    for fresh / unloaded heads — the unload phase is skipped when the
+    for fresh / unloaded heads - the unload phase is skipped when the
     sensor reports no filament and head_source is None, so the swap
     reduces to a pure load. Already-loaded heads with the correct
     (ACE, slot) hit the 'already on' short-circuit (no-op). Mismatched
@@ -1470,7 +1470,7 @@ def inject_auto_load(gcode):
 
     Initial mapping per head is discovered from the first ACE_SWAP_HEAD
     line for that head. Heads that appear only as bare T<n> get the
-    default mapping (ACE 0, slot=head) — that's the state the rewrite
+    default mapping (ACE 0, slot=head) - that's the state the rewrite
     assumes for the initial loadout.
 
     Returns (gcode_with_injection, count_of_heads_loaded).
@@ -1608,7 +1608,7 @@ def plan_loadout_from_file(in_path, num_aces=3, progress=None):
     proxy is well under 1 % of the source size, so plan_loadout's
     in-memory analysis runs on hundreds of KB instead of tens of MB.
 
-    Returns the same dict shape as plan_loadout() — None when no
+    Returns the same dict shape as plan_loadout() - None when no
     body toolchanges are found."""
     keep_re = re.compile(
         r'^(;\s*Change Tool|;\s*LAYER_CHANGE|;\s*filament\b|T\d{1,2}\s*$)',
@@ -1713,7 +1713,7 @@ def rewrite_to_file(in_path, out_path, progress=None):
     last_pr = 0
 
     def flush_pending_unmatched(fout):
-        """Pending bare T<n> wasn't followed by ACE_SWAP_HEAD — emit
+        """Pending bare T<n> wasn't followed by ACE_SWAP_HEAD - emit
         it as a swap-back if the head currently holds a non-initial
         color. Swap-backs also count toward `active` because the
         in-memory rewrite() counts every ACE_SWAP_HEAD line in the
@@ -1735,7 +1735,7 @@ def rewrite_to_file(in_path, out_path, progress=None):
             head_loaded[head] = initial_key
 
     def flush_pending_paired(fout):
-        """Pending bare T was followed by ACE_SWAP_HEAD — emit it
+        """Pending bare T was followed by ACE_SWAP_HEAD - emit it
         and let the swap handler update head_loaded."""
         nonlocal pending_head
         if pending_head is None:
@@ -1863,12 +1863,12 @@ def inject_auto_load_to_file(in_path, out_path, progress=None):
     The previous single-pass implementation took the file's first
     ACE_SWAP_HEAD HEAD=X anywhere as initial[X]. That meant the bare
     T<head> at print start (no following swap) was ignored and
-    initial[head] inherited from a much later mid-print swap — wrong
+    initial[head] inherited from a much later mid-print swap - wrong
     cartridge auto-loaded for the print's initial tool.
 
     Anchor priority (must match the in-memory inject_auto_load):
       1. First line containing the Snapmaker prime-line section header
-         ('画起始线') — anchors BEFORE the inline prime so the auto-
+         ('画起始线') - anchors BEFORE the inline prime so the auto-
          load completes before the runout sensor fires on prime.
       2. First '; Change Tool X -> Tool Y' marker (Orca multi-tool).
       3. First SM_PRINT_PREEXTRUDE_FILAMENT line (fallback for
@@ -2216,7 +2216,7 @@ def main():
                   file=sys.stderr)
             sys.exit(1)
         if not live_slots:
-            print('ERROR: live-lookup returned 0 loaded slots — load filaments '
+            print('ERROR: live-lookup returned 0 loaded slots - load filaments '
                   'first (e.g. ACEB__Load_All) and try again.',
                   file=sys.stderr)
             sys.exit(1)
@@ -2267,7 +2267,7 @@ def main():
             'loose_name_canon':  'Loose-material name (synonym)',
             'loose_fuzzy':       'Loose-material fuzzy',
             'fallback':          'Fallback (no colour match)',
-            'duplicate':         'Duplicate (shared slot — wrong colour)',
+            'duplicate':         'Duplicate (shared slot - wrong colour)',
             'no_slot':           'No slot available',
         }
         _tier_warn = {'loose_exact_hex', 'loose_name_exact', 'loose_name_base',
@@ -2308,13 +2308,13 @@ def main():
                     s['ace'], s['slot'], slot_mat,
                     format_color_hex_rgb(slot_hex)))
         if any_warn:
-            print('  Note: tiers marked ! are degraded matches — the '
+            print('  Note: tiers marked ! are degraded matches - the '
                   'print will proceed but colours/materials at those '
                   'tools will differ from what the slicer assumed.')
 
         no_slot_ts = by_tier.get('no_slot') or []
         if no_slot_ts:
-            print('ERROR: too few loaded slots — the slicer uses %d '
+            print('ERROR: too few loaded slots - the slicer uses %d '
                   'tools but only %d slots are loaded. Load more '
                   'filament and re-run.' % (
                       len(match_info), len(live_slots)),

@@ -48,7 +48,7 @@ if su - lava -c "command -v pip3 >/dev/null"; then
     su - lava -c "pip3 install --user --upgrade -r '$WEB_DEST/backend/requirements.txt'" \
         >>"$LOG" 2>&1 || log "WARN: pip install returned non-zero (see $LOG)"
 else
-    log "ERROR: pip3 not on lava's PATH — install python3-pip first"
+    log "ERROR: pip3 not on lava's PATH - install python3-pip first"
     exit 1
 fi
 log "Ensuring log file exists"
@@ -62,7 +62,7 @@ if [ -d /etc/nginx/fluidd.d ]; then
     log "  -> $NGINX_DROPIN_FLUIDD"
 elif [ -f "$SM_FLUIDD_CONF" ]; then
     if grep -q '/multiace/' "$SM_FLUIDD_CONF"; then
-        log "  $SM_FLUIDD_CONF already has /multiace/ — skipping patch"
+        log "  $SM_FLUIDD_CONF already has /multiace/ - skipping patch"
     else
         cp "$SM_FLUIDD_CONF" "${SM_FLUIDD_CONF}.bak.multiace"
         TMP_LOC="$(mktemp)"
@@ -98,10 +98,10 @@ if pidof nginx >/dev/null 2>&1; then
     if nginx -t >>"$LOG" 2>&1; then
         nginx -s reload 2>/dev/null && log "  nginx reloaded"
     else
-        log "  WARN: nginx -t failed — drop-in installed but not active"
+        log "  WARN: nginx -t failed - drop-in installed but not active"
     fi
 else
-    log "  WARN: nginx not running — multiace-web reachable only on uvicorn port 7126"
+    log "  WARN: nginx not running - multiace-web reachable only on uvicorn port 7126"
 fi
-log "OK — multiACE Web available at http://<printer-ip>/multiace/"
+log "OK - multiACE Web available at http://<printer-ip>/multiace/"
 log "Remove later via: bash $0 --remove"

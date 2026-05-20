@@ -1284,7 +1284,7 @@ class FilamentFeed:
 
                             if retry == 0:
                                 logging.info(
-                                    '[feed_loading] phase3: retry:0 — skip cleanup, advance to retry 1')
+                                    '[feed_loading] phase3: retry:0 - skip cleanup, advance to retry 1')
                                 continue
 
                             scheme = (getattr(self.ace, 'wiggle_scheme', 'EEEEE')
@@ -2245,7 +2245,7 @@ class FilamentFeed:
                 if self.ace is not None and getattr(self.ace, '_ace_mode', '') == 'multi':
                     head_idx = self.filament_ch[channel]
                     short = 'T%d load failed' % head_idx
-                    hint = ('Filament jam on T%d — reload via display, '
+                    hint = ('Filament jam on T%d - reload via display, '
                             'then RESUME (see fluidd log)') % head_idx
                     try:
                         self.gcode.run_script_from_command('M117 %s' % short)

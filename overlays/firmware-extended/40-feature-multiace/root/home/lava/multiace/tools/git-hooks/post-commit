@@ -3,9 +3,9 @@
 #
 # On any commit that changes a tracked file, updates two constants in
 # multiace/klipper/extras/ace.py:
-#   MULTIACE_BUILD_TAG    — short SHA of the commit (which in-memory
+#   MULTIACE_BUILD_TAG    - short SHA of the commit (which in-memory
 #                           build is loaded)
-#   MULTIACE_BUNDLE_SHA1  — sha1 over the concatenated byte contents of
+#   MULTIACE_BUNDLE_SHA1  - sha1 over the concatenated byte contents of
 #                           the non-ace.py tracked files, in BUNDLE_FILES
 #                           order (validates the on-disk state of those
 #                           files). ace.py itself is excluded to avoid
@@ -13,7 +13,7 @@
 #
 # ACE_HEAD_STATUS prints build vs runtime state, and the expected
 # MULTIACE_BUNDLE_SHA1 vs actual (computed from disk at runtime), with
-# a pass/fail marker — so a single line tells the user if the deploy
+# a pass/fail marker - so a single line tells the user if the deploy
 # matches the repo.
 #
 # The hook writes both constants and makes a single follow-up "chore"
@@ -41,7 +41,7 @@ TRACKED_FILES=(
     "multiace/tools/multiace_v2d.init"
 )
 
-# Files that go into MULTIACE_BUNDLE_SHA1 (ace.py excluded — its state
+# Files that go into MULTIACE_BUNDLE_SHA1 (ace.py excluded - its state
 # is validated via in-memory MULTIACE_BUILD_TAG). Must match the order
 # used at runtime in ace.py _compute_bundle_sha1.
 BUNDLE_FILES=(
@@ -85,13 +85,13 @@ SHA=$(git rev-parse --short HEAD)
 # concatenates to stdout without delimiters; sha1sum reads the stream.
 BUNDLE_SHA=$(cat "${BUNDLE_FILES[@]}" | sha1sum | cut -c1-7)
 
-# Rewrite constants — both in one sed pass before the chore commit.
+# Rewrite constants - both in one sed pass before the chore commit.
 if ! grep -q '^MULTIACE_BUILD_TAG = ' "$ACE_PY"; then
-    echo "[post-commit] MULTIACE_BUILD_TAG constant not found in $ACE_PY — skipping" >&2
+    echo "[post-commit] MULTIACE_BUILD_TAG constant not found in $ACE_PY - skipping" >&2
     exit 0
 fi
 if ! grep -q '^MULTIACE_BUNDLE_SHA1 = ' "$ACE_PY"; then
-    echo "[post-commit] MULTIACE_BUNDLE_SHA1 constant not found in $ACE_PY — skipping" >&2
+    echo "[post-commit] MULTIACE_BUNDLE_SHA1 constant not found in $ACE_PY - skipping" >&2
     exit 0
 fi
 

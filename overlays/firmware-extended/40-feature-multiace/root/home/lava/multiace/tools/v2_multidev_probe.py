@@ -9,7 +9,7 @@ Daisy-chained setup: 1 USB cable -> 1 CH343 converter -> shared UART bus ->
 N ACE2 devices. Each device has a 96-bit UID baked in at manufacture, and
 responds to DISCOVER_DEVICE. The host then sends ASSIGN_DEVICE_ID(uid, id=N)
 to give each one a 1-byte numeric address. Subsequent commands address by
-that numeric id — but the wire-level encoding of that addressing is what we
+that numeric id - but the wire-level encoding of that addressing is what we
 want to learn from this probe.
 
 Usage:
@@ -18,7 +18,7 @@ Usage:
   python3 v2_multidev_probe.py /dev/ttyACM0 --assign         (also try ASSIGN)
 
 What to look at:
-  * Each DISCOVER_DEVICE response carries a UID triplet (uid1, uid2, uid3 —
+  * Each DISCOVER_DEVICE response carries a UID triplet (uid1, uid2, uid3 -
     each uint32). One response per physical device on the bus. If we see two
     responses, the bus genuinely carries two ACEs.
   * The flags byte in each response (= byte index 2 in the inner frame).
@@ -264,7 +264,7 @@ def main():
             i + 1, u1, u2, u3, flags))
 
     if args.assign and uids:
-        print('\n=== ASSIGN_DEVICE_ID — assigning ids 1..N to each UID ===')
+        print('\n=== ASSIGN_DEVICE_ID - assigning ids 1..N to each UID ===')
         for i, (u1, u2, u3, _f) in enumerate(uids):
             dev_id = i + 1
             payload = (pb_uint32(1, u1) + pb_uint32(2, u2)
@@ -275,7 +275,7 @@ def main():
                                   % (u1, u2, u3, dev_id))
 
     if args.probe_flags:
-        print('\n=== GET_INFO with varying flags — does flags carry device address? ===')
+        print('\n=== GET_INFO with varying flags - does flags carry device address? ===')
         for flags in (0x00, 0x01, 0x02, 0x03):
             send_and_listen(ser, CMD_GET_INFO, seq=100 + flags,
                             flags=flags, listen_s=args.listen_s,
@@ -286,7 +286,7 @@ def main():
         print('#' * 70)
         print('# COMPREHENSIVE ADDRESSING PROBE')
         print('#' * 70)
-        print('# For each hypothesis we send GET_INFO twice — once "for id=1"')
+        print('# For each hypothesis we send GET_INFO twice - once "for id=1"')
         print('# and once "for id=2". Goal: find an encoding where each request')
         print('# elicits a response from a DIFFERENT physical device. Distinct')
         print('# UIDs in the bytes returned would prove the addressing.')
@@ -340,12 +340,12 @@ def main():
                             flags=0x00, listen_s=args.listen_s,
                             label='GET_INFO seq=%d (just device_id as seq)' % did)
 
-        print('\n=== G. GET_STATUS broadcast — content-based differentiation? ===')
+        print('\n=== G. GET_STATUS broadcast - content-based differentiation? ===')
         send_and_listen(ser, CMD_GET_STATUS, seq=600, flags=0x00,
                         listen_s=args.listen_s,
-                        label='GET_STATUS (broadcast — expect 2 distinct responses)')
+                        label='GET_STATUS (broadcast - expect 2 distinct responses)')
 
-        print('\n=== H. GET_FILAMENT_INFO index sweep — does index encode device+slot? ===')
+        print('\n=== H. GET_FILAMENT_INFO index sweep - does index encode device+slot? ===')
         for idx in (0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 32, 33, 34, 35):
             payload = pb_uint32(1, idx)
             send_and_listen(ser, CMD_GET_FILAMENT_INFO, payload=payload,

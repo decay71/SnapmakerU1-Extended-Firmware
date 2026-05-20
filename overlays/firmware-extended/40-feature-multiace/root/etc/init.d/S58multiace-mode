@@ -3,7 +3,7 @@ VARS_FILE=/home/lava/printer_data/config/extended/multiace/ace_vars.cfg
 SWITCH_SCRIPT=/home/lava/printer_data/config/extended/multiace/ace_mode_switch.sh
 start() {
     if [ ! -x "$SWITCH_SCRIPT" ]; then
-        logger -t multiace-mode "ace_mode_switch.sh missing at $SWITCH_SCRIPT — skip"
+        logger -t multiace-mode "ace_mode_switch.sh missing at $SWITCH_SCRIPT - skip"
         return 0
     fi
     mode="multi"
@@ -19,10 +19,10 @@ start() {
                 || logger -t multiace-mode "swap returned non-zero (continuing)"
             ;;
         normal|"")
-            logger -t multiace-mode "mode=$mode — leaving stock Klipper modules in place"
+            logger -t multiace-mode "mode=$mode - leaving stock Klipper modules in place"
             ;;
         *)
-            logger -t multiace-mode "unknown mode '$mode' — leaving as-is"
+            logger -t multiace-mode "unknown mode '$mode' - leaving as-is"
             ;;
     esac
 }

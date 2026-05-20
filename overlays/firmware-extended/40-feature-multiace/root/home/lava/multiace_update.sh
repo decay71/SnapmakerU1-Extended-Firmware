@@ -19,7 +19,7 @@ fi
 ACE_PY="/home/lava/klipper/klippy/extras/ace.py"
 INSTALL_BASE="/home/lava/multiace"
 restart_klipper() {
-    # 1. Moonraker API — preferred on Snapmaker / PAXX. Runs as lava,
+    # 1. Moonraker API - preferred on Snapmaker / PAXX. Runs as lava,
     #    exposes /printer/firmware_restart on 127.0.0.1:7125, works
     #    whether the updater itself is root or lava.
     for url in \
@@ -48,7 +48,7 @@ restart_klipper() {
     if command -v systemctl >/dev/null 2>&1; then
         systemctl restart klipper >/dev/null 2>&1 && return 0
     fi
-    echo "WARN: could not restart Klipper automatically — do it manually" >&2
+    echo "WARN: could not restart Klipper automatically - do it manually" >&2
     return 1
 }
 current_version() {
@@ -182,11 +182,11 @@ cmd_apply() {
     lat_norm="$(normalize_version "$LATEST")"
     if [ "$FORCE" -eq 0 ]; then
         if [ "$cur_norm" = "$lat_norm" ]; then
-            echo "STATUS: already_on_latest version=$CUR — pass --force to reinstall"
+            echo "STATUS: already_on_latest version=$CUR - pass --force to reinstall"
             return 0
         fi
         if ! is_newer "$cur_norm" "$lat_norm"; then
-            echo "STATUS: refusing_downgrade current=$CUR latest=$LATEST — pass --force to override"
+            echo "STATUS: refusing_downgrade current=$CUR latest=$LATEST - pass --force to override"
             return 0
         fi
     fi
@@ -205,17 +205,17 @@ cmd_apply() {
     if [ -n "$SHA_URL" ]; then
         echo "STATUS: verifying sha256"
         fetch_url "$SHA_URL" > "$TARBALL.sha256" || {
-            echo "WARN: sha256 download failed — skipping verification" >&2
+            echo "WARN: sha256 download failed - skipping verification" >&2
         }
         EXPECTED="$(awk '{print $1}' "$TARBALL.sha256" | head -1)"
         ACTUAL="$(sha256sum "$TARBALL" | awk '{print $1}')"
         if [ "$EXPECTED" != "$ACTUAL" ]; then
-            echo "ERROR: sha256 mismatch — expected $EXPECTED got $ACTUAL" >&2
+            echo "ERROR: sha256 mismatch - expected $EXPECTED got $ACTUAL" >&2
             return 1
         fi
         echo "STATUS: sha256_ok"
     else
-        echo "STATUS: sha256_skipped (no .sha256 asset on release — trust GitHub TLS)"
+        echo "STATUS: sha256_skipped (no .sha256 asset on release - trust GitHub TLS)"
     fi
     echo "STATUS: extracting"
     mkdir "$TMP/extracted"
@@ -224,7 +224,7 @@ cmd_apply() {
     SRC="$(dirname "$SRC" 2>/dev/null)"
     [ "$SRC" = "." ] && SRC=""
     if [ -z "$SRC" ]; then
-        echo "ERROR: tarball missing install_multiace.sh — wrong asset layout" >&2
+        echo "ERROR: tarball missing install_multiace.sh - wrong asset layout" >&2
         return 1
     fi
     if [ "$KEEP_WEB" -eq 1 ]; then

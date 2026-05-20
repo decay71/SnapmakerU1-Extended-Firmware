@@ -6,7 +6,7 @@
 # A post-install-time copy of this file lands in the overlay and is
 # therefore invisible at next boot. Two ways around that:
 #   1) bake the file into the firmware image (paxx-style overlay)
-#   2) start it manually after install — install_multiace.sh does that.
+#   2) start it manually after install - install_multiace.sh does that.
 # Either way the same script controls the lifecycle.
 
 NAME="multiace-web"
@@ -45,7 +45,7 @@ start() {
         sleep 1
         n=$((n + 1))
     done
-    # busybox start-stop-daemon -c USER does setuid only, not a login —
+    # busybox start-stop-daemon -c USER does setuid only, not a login -
     # HOME stays as root's, so Python can't find lava's --user site
     # (where uvicorn/fastapi/httpx live). Set HOME/USER/PATH explicitly.
     HOME_LAVA="/home/lava"

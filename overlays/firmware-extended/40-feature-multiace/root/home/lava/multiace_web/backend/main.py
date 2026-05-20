@@ -1,5 +1,5 @@
 """
-multiACE Web — FastAPI backend.
+multiACE Web - FastAPI backend.
 
 Serves the REST + WebSocket API consumed by both the bundled Vue/CDN
 frontend and any future mobile app. Auth is delegated to nginx
@@ -679,7 +679,7 @@ def _used_tool_indices(pp, gcode: str) -> set[int]:
     profile header even if the print only uses a subset; we don't
     want those unused entries cluttering the preflight UI or the
     material check. 'Change Tool X -> Tool Y' comments enumerate
-    every transition — union of X and Y is every T-index touched.
+    every transition - union of X and Y is every T-index touched.
     For single-tool gcodes with no transitions we fall back to the
     post-processor's bare-T fallback so a one-colour print still
     shows its initial T."""
@@ -887,8 +887,8 @@ async def _run_preflight_pipeline(job_id: str, token: str, mode: str,
             raise RuntimeError(
                 "required material(s) not loaded: " + ", ".join(missing_mats))
         # Mode dispatch:
-        #   slicer  — matcher.apply_remap, runs against currently-loaded slots
-        #   optimize / layer — swap-aware free head assignment; user is
+        #   slicer  - matcher.apply_remap, runs against currently-loaded slots
+        #   optimize / layer - swap-aware free head assignment; user is
         #                     expected to physically arrange spools to the
         #                     displayed positions before clicking print.
         if mode == "slicer":
@@ -1187,7 +1187,7 @@ async def debug_mode_enable() -> dict:
             status_code=500,
             detail=(f"sudo touch /oem/.debug failed (rc={rc}): {out.strip()}. "
                     "Sudoers drop-in /etc/sudoers.d/multiace-debug may be "
-                    "missing — re-run install_multiace.sh."))
+                    "missing - re-run install_multiace.sh."))
     return {"enabled": _DEBUG_FLAG_PATH.exists(), "stdout": out}
 
 @app.post("/api/debug-mode/disable")
@@ -1248,7 +1248,7 @@ async def get_state() -> dict:
 
 @app.get("/api/aces")
 async def list_aces() -> dict:
-    """Backwards-compatible subset of /api/state — only the per-ACE list."""
+    """Backwards-compatible subset of /api/state - only the per-ACE list."""
     try:
         status = await _query_state()
     except httpx.HTTPError as e:
@@ -1258,7 +1258,7 @@ async def list_aces() -> dict:
 
 @app.get("/api/debug")
 async def get_debug() -> dict:
-    """Raw moonraker dump — useful for inspecting unknown fields."""
+    """Raw moonraker dump - useful for inspecting unknown fields."""
     try:
         return await _query_state()
     except httpx.HTTPError as e:
@@ -1486,11 +1486,11 @@ def _snap_path(name: str) -> Path:
     return Path(SNAPSHOT_DIR) / f"{name}.json"
 
 def _capture_snapshot(now_status: dict) -> dict:
-    """Build a snapshot from the current parsed state — what's loaded and
+    """Build a snapshot from the current parsed state - what's loaded and
     where. Used for both saving (after parse_state) and as preview data.
 
     Skips toolheads that have filament physically present but no
-    explicit head_source — those land in the snapshot with ace=None /
+    explicit head_source - those land in the snapshot with ace=None /
     slot=None, which would later make apply emit a 'slot is empty'
     error. Without a known source ACE/slot we can't reproduce the
     load anyway, so dropping is the right move."""
@@ -1633,14 +1633,14 @@ async def apply_snapshot(name: str) -> dict:
             warnings.append({
                 "head": idx, "ace": ace_i, "slot": slot_i, "kind": "color",
                 "want": want_col, "have": have_col,
-                "message": (f"T{idx}: Farbabweichung — Snapshot {want_col}, "
+                "message": (f"T{idx}: Farbabweichung - Snapshot {want_col}, "
                             f"Slot {have_col}"),
             })
         elif want_brand and have_brand and want_brand != have_brand:
             warnings.append({
                 "head": idx, "ace": ace_i, "slot": slot_i, "kind": "brand",
                 "want": want_brand, "have": have_brand,
-                "message": (f"T{idx}: Hersteller-Abweichung — Snapshot {want_brand}, "
+                "message": (f"T{idx}: Hersteller-Abweichung - Snapshot {want_brand}, "
                             f"Slot {have_brand}"),
             })
 
@@ -1977,7 +1977,7 @@ async def list_notifications() -> dict:
 
 @app.post("/api/notifications/test")
 async def test_notification(payload: dict | None = None) -> dict:
-    """Inject a fake Klipper-error notification — useful for verifying
+    """Inject a fake Klipper-error notification - useful for verifying
     the WS bridge from the printer command line:
         curl -X POST http://127.0.0.1:7126/api/notifications/test
     """
@@ -2117,18 +2117,18 @@ class _PluginGcode(BaseModel):
 
 @app.get("/api/plugin-api/state")
 async def plugin_api_state() -> dict:
-    """Aggregated host state — same shape as /api/state."""
+    """Aggregated host state - same shape as /api/state."""
     return await get_state()
 
 @app.get("/api/plugin-api/aces")
 async def plugin_api_aces() -> dict:
-    """ACE list — same shape as /api/aces."""
+    """ACE list - same shape as /api/aces."""
     return await list_aces()
 
 @app.post("/api/plugin-api/gcode")
 async def plugin_api_gcode(req: _PluginGcode) -> dict:
     """Run a gcode script on the printer. Pass-through to Moonraker
-    /printer/gcode/script — Moonraker enforces the print-state rules
+    /printer/gcode/script - Moonraker enforces the print-state rules
     (busy / paused / printing) on its end."""
     script = (req.script or "").strip()
     if not script:

@@ -183,7 +183,7 @@
       <h3>{{ t('ui.dashboard.snapshots') }}</h3>
       <div class="snapshot-row">
         <select v-model="selectedSnapshot">
-          <option value="">— {{ t('ui.dashboard.snapshot_select_or_new') }} —</option>
+          <option value="">- {{ t('ui.dashboard.snapshot_select_or_new') }} -</option>
           <option v-for="s in snapshots" :key="s.name" :value="s.name">
             {{ s.name }}{{ s.saved ? ' · ' + s.saved.slice(0,16) : '' }}
           </option>
@@ -250,11 +250,11 @@
         </div>
         <div class="config-row">
           <label>{{ t('ui.config.dryer_temp') }}</label>
-          <input type="number" v-model.number="configForm.dryer_temp" min="0" max="80" step="1" placeholder="—">
+          <input type="number" v-model.number="configForm.dryer_temp" min="0" max="80" step="1" placeholder="-">
         </div>
         <div class="config-row">
           <label>{{ t('ui.config.dryer_duration') }}</label>
-          <input type="number" v-model.number="configForm.dryer_duration" min="0" max="600" step="5" placeholder="—">
+          <input type="number" v-model.number="configForm.dryer_duration" min="0" max="600" step="5" placeholder="-">
         </div>
         <div class="config-row">
           <label>{{ t('ui.config.display_index_base') }}</label>
@@ -265,15 +265,15 @@
         </div>
         <div class="config-row">
           <label>{{ t('ui.config.load_retry') }}</label>
-          <input type="number" v-model.number="configForm.load_retry" min="0" max="20" step="1" placeholder="—">
+          <input type="number" v-model.number="configForm.load_retry" min="0" max="20" step="1" placeholder="-">
         </div>
         <div class="config-row">
           <label>{{ t('ui.config.extrusion_retry') }}</label>
-          <input type="number" v-model.number="configForm.extrusion_retry" min="0" max="20" step="1" placeholder="—">
+          <input type="number" v-model.number="configForm.extrusion_retry" min="0" max="20" step="1" placeholder="-">
         </div>
         <div class="config-row">
           <label>{{ t('ui.config.unload_retry') }}</label>
-          <input type="number" v-model.number="configForm.unload_retry" min="0" max="20" step="1" placeholder="—">
+          <input type="number" v-model.number="configForm.unload_retry" min="0" max="20" step="1" placeholder="-">
         </div>
         <fieldset>
           <legend>{{ t('ui.config.debug_logs') }}</legend>
@@ -289,37 +289,37 @@
           <div class="per-ace-row">
             <label>{{ t('ui.config.dryer_temp_override') }}
               <input type="number" v-model.number="configForm.perAce[i-1].dryer_temp"
-                     min="0" max="80" step="1" placeholder="—"> °C
+                     min="0" max="80" step="1" placeholder="-"> °C
             </label>
           </div>
           <div class="per-ace-row">
             <label>{{ t('ui.config.dryer_duration_override') }}
               <input type="number" v-model.number="configForm.perAce[i-1].dryer_duration"
-                     min="0" max="600" step="5" placeholder="—"> min
+                     min="0" max="600" step="5" placeholder="-"> min
             </label>
           </div>
           <div class="per-ace-row">
             <label>{{ t('ui.config.feed_speed') }}
               <input type="number" v-model.number="configForm.perAce[i-1].feed_speed"
-                     min="1" max="500" step="1" placeholder="—"> mm/s
+                     min="1" max="500" step="1" placeholder="-"> mm/s
             </label>
           </div>
           <div class="per-ace-row">
             <label>{{ t('ui.config.retract_speed') }}
               <input type="number" v-model.number="configForm.perAce[i-1].retract_speed"
-                     min="1" max="500" step="1" placeholder="—"> mm/s
+                     min="1" max="500" step="1" placeholder="-"> mm/s
             </label>
           </div>
           <div class="per-ace-row">
             <label>{{ t('ui.config.load_length') }}
               <input type="number" v-model.number="configForm.perAce[i-1].load_length"
-                     min="0" max="5000" step="10" placeholder="—"> mm
+                     min="0" max="5000" step="10" placeholder="-"> mm
             </label>
           </div>
           <div class="per-ace-row">
             <label>{{ t('ui.config.retract_length') }}
               <input type="number" v-model.number="configForm.perAce[i-1].retract_length"
-                     min="0" max="5000" step="10" placeholder="—"> mm
+                     min="0" max="5000" step="10" placeholder="-"> mm
             </label>
           </div>
           <details class="per-slot-block">
@@ -336,9 +336,9 @@
                 <tr v-for="s in 4" :key="s-1">
                   <td>{{ dispIdx(s-1) }}</td>
                   <td><input type="number" v-model.number="configForm.perAce[i-1].perSlot[s-1].load_length"
-                             min="0" max="5000" step="10" placeholder="—"></td>
+                             min="0" max="5000" step="10" placeholder="-"></td>
                   <td><input type="number" v-model.number="configForm.perAce[i-1].perSlot[s-1].retract_length"
-                             min="0" max="5000" step="10" placeholder="—"></td>
+                             min="0" max="5000" step="10" placeholder="-"></td>
                 </tr>
               </tbody>
             </table>
@@ -542,14 +542,14 @@ reboot</pre>
     <div class="dialog preflight-dialog">
       <h3>
         {{ t('ui.preflight.title') }}
-        <span v-if="preflight.report" class="muted small">— {{ preflight.report.filename }}</span>
+        <span v-if="preflight.report" class="muted small">- {{ preflight.report.filename }}</span>
       </h3>
       <p v-if="preflight.busy" class="muted">{{ t('ui.preflight.loading') }}</p>
       <p v-if="preflight.error" class="error">{{ preflight.error }}</p>
       <div v-if="preflight.progress && preflight.progress.running"
            class="preflight-progress preflight-progress-sticky">
         <div class="preflight-progress-label">
-          {{ stageLabel(preflight.progress.stage) }} —
+          {{ stageLabel(preflight.progress.stage) }} -
           {{ Math.round(preflight.progress.percent) }}%
         </div>
         <div class="preflight-progress-bar">
@@ -611,7 +611,7 @@ reboot</pre>
               <span v-else class="preflight-infeasible">
                 {{ t('ui.preflight.not_feasible') }}
                 <span v-if="preflight.report.plans[mode].reason"
-                      class="muted small">— {{ preflight.report.plans[mode].reason }}</span>
+                      class="muted small">- {{ preflight.report.plans[mode].reason }}</span>
               </span>
             </div>
             <table class="preflight-mapping" v-if="preflight.report.plans[mode].mapping.length">
@@ -633,7 +633,7 @@ reboot</pre>
                     ACE {{ dispIdx(m.slot.ace) }} Slot {{ dispIdx(m.slot.slot) }}
                     <span class="muted small">· {{ m.slot.material || '?' }}</span>
                   </td>
-                  <td v-else class="muted">—</td>
+                  <td v-else class="muted">-</td>
                   <td>T{{ dispIdx(m.t) }}</td>
                   <td>←</td>
                   <td>

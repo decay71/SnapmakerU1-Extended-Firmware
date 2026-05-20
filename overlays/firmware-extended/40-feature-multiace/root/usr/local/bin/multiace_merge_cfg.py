@@ -5,8 +5,8 @@ ace.cfg.default shipped by a firmware update.
 Scope: only the [ace] and [ace N] sections. For each scalar key: value
 line within those sections, if the user's old cfg has the same key with
 a different value (or has uncommented a documented key), the user's
-value wins. Everything outside [ace]/[ace N] — macros, includes, other
-sections — is copied verbatim from the new default.
+value wins. Everything outside [ace]/[ace N] - macros, includes, other
+sections - is copied verbatim from the new default.
 
 Multi-line / indented values (e.g. macro bodies) are never touched.
 A line is considered a candidate for substitution only when it starts

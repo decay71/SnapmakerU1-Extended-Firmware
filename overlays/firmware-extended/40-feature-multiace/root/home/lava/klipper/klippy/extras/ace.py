@@ -24,7 +24,7 @@ MULTIACE_BUNDLE_SHA1 = "bcfab1f"
 
 def _load_i18n_catalog(i18n_dir, lang):
     """Read <i18n_dir>/<lang>.json overlaid on en.json. Returns a dict
-    (possibly empty if the i18n dir is missing) — caller falls back to
+    (possibly empty if the i18n dir is missing) - caller falls back to
     the literal key when a string is not found."""
     out = {}
     try:
@@ -429,7 +429,7 @@ class MultiAce:
         try:
             self.printer.add_object('ace_device', self)
         except self.printer.config_error:
-            logging.info('[multiACE] ace_device alias already registered — skipping')
+            logging.info('[multiACE] ace_device alias already registered - skipping')
 
         self.printer.register_event_handler('print_stats:start', self._on_print_start)
         self.printer.register_event_handler('print_stats:stop', self._on_print_end)
@@ -625,7 +625,7 @@ class MultiAce:
         Translate a dotted key against the loaded catalog. Returns the
         formatted string, or the key itself when not found (so log lines
         always carry SOMETHING readable). Index-style params are NOT
-        auto-shifted here — caller passes display-ready values via
+        auto-shifted here - caller passes display-ready values via
         self._disp(idx) when appropriate.
         """
         v = getattr(self, '_i18n', None) or {}
@@ -750,7 +750,7 @@ class MultiAce:
         backend = os.path.join(self._web_dir, 'backend')
         frontend = os.path.join(self._web_dir, 'frontend')
         if not os.path.isdir(backend) or not os.path.isfile(os.path.join(backend, 'main.py')):
-            logging.info('[multiACE] web not installed at %s — skip', self._web_dir)
+            logging.info('[multiACE] web not installed at %s - skip', self._web_dir)
             return
         log_path = '/home/lava/printer_data/logs/multiace_web.log'
         try:
@@ -875,7 +875,7 @@ class MultiAce:
         if self.save_variables:
             self._ace_mode = self.save_variables.allVariables.get('ace__mode', 'normal')
         if self._ace_mode == 'normal':
-            logging.info('[multiACE] Normal mode — skipping ACE detection')
+            logging.info('[multiACE] Normal mode - skipping ACE detection')
             return
 
         if self._ace_mode == 'multi':
@@ -883,7 +883,7 @@ class MultiAce:
             self.printer.register_event_handler(
                 'extruder:activate_extruder', self._on_extruder_change)
         else:
-            logging.info('[multiACE] SingleACE mode — no head_source tracking')
+            logging.info('[multiACE] SingleACE mode - no head_source tracking')
 
         self._refresh_ace_devices('startup')
 
@@ -1043,7 +1043,7 @@ class MultiAce:
         active ACE so the Snapmaker display reflects the live slot
         belegung after an unload.
 
-        No-op when any toolhead still carries filament — Snapmaker's
+        No-op when any toolhead still carries filament - Snapmaker's
         print_task_config holds the per-extruder filament profile during
         a print, and clobbering it mid-print would lie to the firmware
         about what's loaded. Safe to call from every head_source[h] = None
@@ -1055,7 +1055,7 @@ class MultiAce:
           2. self._info_per_ace[ace].slots[]  (RFID from ACE hardware)
           3. Empty marker (NONE / 000000FF) for unconfigured slots.
 
-        Failures are logged but never raised — display drift is cosmetic,
+        Failures are logged but never raised - display drift is cosmetic,
         not a print-blocking concern.
         """
         if any(self._head_source.get(h) is not None for h in range(4)):
@@ -1155,7 +1155,7 @@ class MultiAce:
                         head=head, ace=self._disp(ace_idx)))
         self._auto_feed_enabled = True
         self._fa_context = 'print'
-        logging.info('[multiACE] Print started — auto-feed enabled')
+        logging.info('[multiACE] Print started - auto-feed enabled')
         self._fa_trace('gate OPEN (context=print) via _on_print_start')
 
         try:
@@ -1205,7 +1205,7 @@ class MultiAce:
     def _on_print_end(self, *args):
         self._auto_feed_enabled = False
         self._fa_context = 'idle'
-        logging.info('[multiACE] Print ended — auto-feed disabled')
+        logging.info('[multiACE] Print ended - auto-feed disabled')
         self._fa_trace('gate CLOSE (context=idle) via _on_print_end')
         stopped_any = False
         for idx in range(len(self._ace_devices)):
@@ -1782,7 +1782,7 @@ class MultiAce:
         except Exception as e:
             err_first = str(e)
             logging.info(
-                "ACE[%d]: Error writing to serial: %s — attempting reconnect+retry"
+                "ACE[%d]: Error writing to serial: %s - attempting reconnect+retry"
                 % (idx, err_first))
             self._usb_stats['errno5_total'] += 1
 
@@ -1900,7 +1900,7 @@ class MultiAce:
                         logging.info('[multiACE] PAUSE call failed: %s' % str(pe))
                     try:
                         self.printer.invoke_async_shutdown(
-                            '[multiACE] ACE %d permanently failed — print stopped' % idx)
+                            '[multiACE] ACE %d permanently failed - print stopped' % idx)
                     except Exception:
                         pass
                     return self.reactor.NEVER
@@ -1980,7 +1980,7 @@ class MultiAce:
                     snap = (vstate or {}).get('last_slot_statuses', {})
                     if snap.get(slot) == 'assisting':
                         self._fa_log.info(
-                            'start_feed_assist error_2 ignored — ACE %s slot %s already assisting'
+                            'start_feed_assist error_2 ignored - ACE %s slot %s already assisting'
                             % (self._disp(idx), self._disp(slot)))
                         return
                 if msg in ('forbidden', 'error_2') and attempt < max_retries:
@@ -2119,7 +2119,7 @@ class MultiAce:
             proto = self._protocols.get(idx) if hasattr(self, '_protocols') else None
             if proto is not None and getattr(proto, 'NAME', None) == 'v2':
                 logging.info(
-                    '[multiACE] _disable_feed_assist_all: keep ACE %d armed (V2 — velocity tracker handles mode switch)' % idx)
+                    '[multiACE] _disable_feed_assist_all: keep ACE %d armed (V2 - velocity tracker handles mode switch)' % idx)
                 continue
             any_running = True
             try:
@@ -2147,7 +2147,7 @@ class MultiAce:
 
         Also sets _v2_active_rev_assist = True so the velocity tracker
         STARTS dispatching MODE_SWITCH on direction changes (it's gated
-        on this flag — skipped during normal print to avoid error_2
+        on this flag - skipped during normal print to avoid error_2
         spam, enabled during unload so V2 actively rev-assists the
         ~10s tip-form retract instead of braking the filament).
         Flag is cleared the next time _arm_fa_for runs (= we're back
@@ -2161,12 +2161,12 @@ class MultiAce:
         is no print context and the FA gate (_auto_feed_enabled) is
         closed, so the regular _arm_fa_for path never runs. Without a
         prior arm the velocity tracker sees armed_slot=None and skips
-        dispatch — the tip-form runs without V2-side rollback help.
+        dispatch - the tip-form runs without V2-side rollback help.
 
         Bypasses the FA gate intentionally: V2 buffer assist is the
         safe semantic on this hardware regardless of print context.
         No-op for V1 ACEs (V1 needs FA stopped, not started, before
-        unload — handled by the V1 branch in the caller).
+        unload - handled by the V1 branch in the caller).
         Returns True if FA is armed (already or now), False otherwise.
         """
         source = self._head_source.get(head)
@@ -2264,7 +2264,7 @@ class MultiAce:
                         continue
                     if pending_ts is not None:
                         self._fa_log.info(
-                            '[multiACE] V2 cmd13 pending stale (%.1fs) ACE %d slot %d — re-issuing',
+                            '[multiACE] V2 cmd13 pending stale (%.1fs) ACE %d slot %d - re-issuing',
                             now - pending_ts, idx, i)
                     pending[i] = now
                     def _store(self, response, _idx=idx, _slot=i):
@@ -2321,7 +2321,7 @@ class MultiAce:
         Called from the velocity tracker tick ONLY when a direction
         change happens during swap unload (when active rev-assist via
         mode=3 is actually needed). During print phase the tracker
-        skips dispatch entirely — V2 stays in mode=2 and brief
+        skips dispatch entirely - V2 stays in mode=2 and brief
         slicer retracts are absorbed by the buffer.
 
         Restored from 83f5ce7-style unload behavior:
@@ -2330,7 +2330,7 @@ class MultiAce:
           matches actual demand so V2's internal motor-stall detection
           doesn't trip during slow tip-form retracts.
         * For target_mode=2 (rev->fwd): use start_feed_assist instead
-          of feed_or_rollback_raw mode=2 — start_feed_assist puts V2
+          of feed_or_rollback_raw mode=2 - start_feed_assist puts V2
           into "passive armed" state (pumps on buffer-arm signal,
           doesn't expect continuous encoder motion), so no assist_error
           trip during idle after the rev phase ends.
@@ -2613,7 +2613,7 @@ class MultiAce:
                             disp['last_mode'] = target_mode
                             self._fa_log.info(
                                 '[v2-vel] ace=%d slot=%d direction change '
-                                '(%s) — not in unload, V2 stays in '
+                                '(%s) - not in unload, V2 stays in '
                                 'mode=%d (no dispatch)'
                                 % (idx, armed_slot,
                                    'fwd' if target_mode == 2 else 'rev',
@@ -2906,7 +2906,7 @@ class MultiAce:
                         attempts=reconnect_count))
                     self._handle_per_ace_failure(idx, 'stuck_after_reconnects')
                     raise self.printer.command_error(
-                        '[multiACE] ACE %d firmware stuck — power-cycle required' % idx)
+                        '[multiACE] ACE %d firmware stuck - power-cycle required' % idx)
                 reconnect_count += 1
                 self.log_error(self._t('msg.ace_wait_timeout_reconnect',
                     ace=self._disp(idx), timeout=timeout,
@@ -2929,7 +2929,7 @@ class MultiAce:
 
                 self._handle_per_ace_failure(idx, 'wait_ace_ready_timeout')
                 raise self.printer.command_error(
-                    '[multiACE] ACE %d unresponsive — reconnect failed, '
+                    '[multiACE] ACE %d unresponsive - reconnect failed, '
                     'operation aborted' % idx)
             curr_ts = self.reactor.monotonic()
             self.reactor.pause(curr_ts + 0.5)
@@ -3192,11 +3192,11 @@ class MultiAce:
                 '[multiACE] _refresh_slot_overrides: keeping previous, error: %s' % e)
 
     def _refresh_slot_overrides_if_changed(self):
-        """Cheap mtime poll — reloads only when slot_overrides.json
+        """Cheap mtime poll - reloads only when slot_overrides.json
         has been touched since we last read it (e.g. backend POST,
         backend auto-clear-on-eject, or another writer). When the set
         of override keys changes (added or removed), trigger a
-        _push_rfid_info so the display picks up the new state — most
+        _push_rfid_info so the display picks up the new state - most
         importantly, when an override gets dropped (e.g. physical
         eject) the now-empty slot's display field needs to be cleared
         too."""
@@ -3256,8 +3256,8 @@ class MultiAce:
 
     def _save_slot_overrides(self):
         """Write self._slot_overrides back to slot_overrides.json
-        atomically (.tmp + os.replace) so concurrent readers — the
-        FastAPI backend's mtime poller, ace.py's own mtime poller —
+        atomically (.tmp + os.replace) so concurrent readers - the
+        FastAPI backend's mtime poller, ace.py's own mtime poller -
         never see a half-written file."""
         try:
             import json as _json
@@ -4085,7 +4085,7 @@ class MultiAce:
         if is_v2:
             self._v2_arm_fa_for_unload(head)
             self._fa_trace(
-                'unload skip-stop FA on ACE %d (V2 — velocity tracker '
+                'unload skip-stop FA on ACE %d (V2 - velocity tracker '
                 'handles rollback assist via mode=3)' % active_idx)
         else:
             stop_slots = set()
@@ -4487,7 +4487,7 @@ class MultiAce:
         source = self._head_source.get(head)
         if (source and source['ace_index'] == ace_index and source['slot'] == slot
                 and not source.get('load_failed')):
-            logging.info('[multiACE] Swap: HEAD %d already on ACE %d / Slot %d — skipping' % (
+            logging.info('[multiACE] Swap: HEAD %d already on ACE %d / Slot %d - skipping' % (
                 head, ace_index, slot))
 
             swap_temp = self._get_swap_temp(head)
@@ -4615,7 +4615,7 @@ class MultiAce:
             if empty_head:
                 logging.info(
                     '[multiACE] Swap: head %d is empty '
-                    '(sensor=False, head_source=None) — skipping unload, '
+                    '(sensor=False, head_source=None) - skipping unload, '
                     'proceeding directly to load' % head)
                 unload_start_ts = time.monotonic()
                 unload_end_ts = unload_start_ts
@@ -4941,7 +4941,7 @@ class MultiAce:
                     idx = i
                     break
         if idx < 0:
-            raise gcmd.error('No V2 ACE detected — connect device or pass ACE=<idx>')
+            raise gcmd.error('No V2 ACE detected - connect device or pass ACE=<idx>')
         proto = self._protocols.get(idx)
         if proto is None or getattr(proto, 'NAME', None) != 'v2':
             raise gcmd.error('ACE %d is not a V2 device' % idx)
@@ -5306,7 +5306,7 @@ class MultiAce:
         _info('  after arm FA: slot %d=%s | %s'
               % (fa_slot, fa_status_1, _snapshot_all()))
         if fa_status_1 != 'assisting':
-            _info('!! FA arm did not reach `assisting` — aborting test')
+            _info('!! FA arm did not reach `assisting` - aborting test')
             for s_idx in range(4):
                 self.send_request_to(idx, {
                     'method': 'stop_feed_assist',
@@ -5603,7 +5603,7 @@ class MultiAce:
     def _run_update_script(self, gcmd, sub_args, timeout):
         if not os.path.isfile(self._UPDATE_SCRIPT):
             raise gcmd.error(
-                '[multiACE] Updater script not found at %s — re-run '
+                '[multiACE] Updater script not found at %s - re-run '
                 'install_multiace.sh from your repo to install it.'
                 % self._UPDATE_SCRIPT)
         cmd = ['bash', self._UPDATE_SCRIPT] + sub_args
@@ -5692,7 +5692,7 @@ class MultiAce:
         self.log_always(self._t('msg.usb_debug_set', state=state))
 
     def _file_sha1_short(self, path):
-        """Short sha1 of a file on disk — used by ACE_HEAD_STATUS to let
+        """Short sha1 of a file on disk - used by ACE_HEAD_STATUS to let
         the user verify each deployed file matches the repo version.
         Returns 'missing' if the file doesn't exist, 'err' on read error."""
         try:

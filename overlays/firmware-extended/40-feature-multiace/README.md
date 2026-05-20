@@ -13,7 +13,7 @@ build system. It adds multiACE support to a PAXX firmware image.
    ```sh
    make PROFILE=extended build
    ```
-   (Docker required — see PAXX `docs/development.md`.)
+   (Docker required - see PAXX `docs/development.md`.)
 4. The resulting `firmware/firmware.bin` includes multiACE.
 
 ## What's in the image
@@ -24,7 +24,7 @@ build system. It adds multiACE support to a PAXX firmware image.
 - `[include extended/ace.cfg]` wired into the user's `printer.cfg` via
   PAXX's firmware-config tweak system (toggle in the PAXX UI)
 - The full multiACE source bundle under `/home/lava/multiace/`, but
-  the Web service is **not** started by default — see below.
+  the Web service is **not** started by default - see below.
 
 ## Optional Web UI
 
