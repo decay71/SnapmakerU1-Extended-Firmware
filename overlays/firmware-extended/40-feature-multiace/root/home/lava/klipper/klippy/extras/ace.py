@@ -272,6 +272,7 @@ class MultiAce:
 
         self._v2_velocity_timers = {}
         self._v2_velocity_state = {}
+        self._fa_intent_ts = {}
 
         self._v2_feed_check_check_length = config.getint(
             'v2_feed_check_check_length', 200, minval=3, maxval=254)
@@ -424,6 +425,11 @@ class MultiAce:
 
         self.printer.register_event_handler('klippy:ready', self._handle_ready)
         self.printer.register_event_handler('klippy:disconnect', self._handle_disconnect)
+
+        try:
+            self.printer.add_object('ace_device', self)
+        except self.printer.config_error:
+            logging.info('[multiACE] ace_device alias already registered — skipping')
 
         self.printer.register_event_handler('print_stats:start', self._on_print_start)
         self.printer.register_event_handler('print_stats:stop', self._on_print_end)
@@ -790,6 +796,9 @@ class MultiAce:
         logging.info('[multiACE] web spawned pid=%d on :%d (cwd=%s)',
                      p.pid, self._web_port, backend)
         self.log_always(self._t('msg.web_running'))
+
+    def disable_ap(self):
+        return True
 
     def _handle_ready(self):
         self.toolhead = self.printer.lookup_object('toolhead')
@@ -1713,6 +1722,11 @@ class MultiAce:
             self._fa_log.info(
                 'SEND ACE %d id=%d method=%s slot=%s len=%s speed=%s'
                 % (idx, msg_id, method, slot_repr, len_repr, speed_repr))
+        if method == 'start_feed_assist':
+            try:
+                self._fa_intent_ts[(idx, int(slot_repr))] = self.reactor.monotonic()
+            except (TypeError, ValueError):
+                pass
         original_cb = callback
         def _traced_cb(self, response):
             if trace_request:
@@ -1958,16 +1972,24 @@ class MultiAce:
                     if attempt > 0:
 
                         self._fa_log.warning(
-                            'start_feed_assist OK after %d retry(s): ACE %d slot %d'
-                            % (attempt, idx, slot))
+                            'start_feed_assist OK after %d retry(s): ACE %s slot %s'
+                            % (attempt, self._disp(idx), self._disp(slot)))
                     return
+                if msg == 'error_2':
+                    vstate = self._v2_velocity_state.get(idx)
+                    snap = (vstate or {}).get('last_slot_statuses', {})
+                    if snap.get(slot) == 'assisting':
+                        self._fa_log.info(
+                            'start_feed_assist error_2 ignored — ACE %s slot %s already assisting'
+                            % (self._disp(idx), self._disp(slot)))
+                        return
                 if msg in ('forbidden', 'error_2') and attempt < max_retries:
                     next_attempt = attempt + 1
 
                     self._fa_log.info(
-                        'start_feed_assist %s, retry %d/%d in %.1fs: ACE %d slot %d'
+                        'start_feed_assist %s, retry %d/%d in %.1fs: ACE %s slot %s'
                         % (msg.upper(), next_attempt, max_retries,
-                           retry_delay, idx, slot))
+                           retry_delay, self._disp(idx), self._disp(slot)))
                     def _retry(eventtime):
 
                         if not self._auto_feed_enabled:
@@ -1982,8 +2004,9 @@ class MultiAce:
                             if vstate is not None:
                                 vstate['last_arm_time'] = self.reactor.monotonic()
                             self._fa_log.info(
-                                'start_feed_assist RETRY %d/%d sent: ACE %d slot %d'
-                                % (next_attempt, max_retries, idx, slot))
+                                'start_feed_assist RETRY %d/%d sent: ACE %s slot %s'
+                                % (next_attempt, max_retries,
+                                   self._disp(idx), self._disp(slot)))
                         except Exception as e:
                             self.log_error(self._t('msg.fa_retry_send_failed',
                                 error=e))
@@ -2469,6 +2492,16 @@ class MultiAce:
                     self._fa_log.info(
                         '[v2-diag] ace=%d slot-status-change: %s | snapshot: %s'
                         % (idx, chg_str, snap_str))
+                    now = self.reactor.monotonic()
+                    for sidx, prev, ss in changed:
+                        if prev == 'ready' and ss == 'assisting':
+                            ts = self._fa_intent_ts.get((idx, sidx), 0.0)
+                            age = now - ts
+                            if age > 3.0:
+                                self._fa_log.warning(
+                                    '[v2-diag] UNSOLICITED assist on ACE %d slot %d '
+                                    '(no start_feed_assist sent in last %.1fs)'
+                                    % (idx, sidx, age))
             state['last_slot_statuses'] = status_snapshot
 
             target_slot = None
