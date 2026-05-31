@@ -388,30 +388,26 @@ def match_colors_to_slots(color_names, live_slots, num_heads=4,
             continue
         _match_pass(tier_name, True, pred)
 
-    for tier_name, skip_when_strict, pred in color_tiers:
-        if skip_when_strict and strict_color:
-            continue
-        if tier_name == 'fuzzy' and fuzzy_max_distance is None:
-            continue
-        _match_pass(tier_name, False, pred)
-
     for t in list(pending):
+        tm = t_meta[t]
+        t_mat = (tm.get('mat') or '').strip().lower()
         chosen = None
         for sm in slot_meta:
             s = sm['slot']
             if (s['ace'], s['slot']) in used:
                 continue
+            if t_mat and sm['mat'] and sm['mat'] != t_mat:
+                continue
             chosen = sm
             break
         if chosen is None:
-            break
+            continue
         s = chosen['slot']
         used.add((s['ace'], s['slot']))
-        tm = t_meta[t]
         info[t] = {
             'tier': 'fallback',
             'slot': s,
-            'loose_mat': bool(tm['mat']) and chosen['mat'] != tm['mat'],
+            'loose_mat': False,
         }
         pending.remove(t)
 
@@ -420,10 +416,14 @@ def match_colors_to_slots(color_names, live_slots, num_heads=4,
                    if (sm['slot']['ace'], sm['slot']['slot']) in used]
         for t in list(pending):
             tm = t_meta[t]
+            t_mat = (tm.get('mat') or '').strip().lower()
+            candidates = [sm for sm in already
+                          if not t_mat or not sm['mat']
+                          or sm['mat'] == t_mat]
             best = None
             best_d = None
             if tm['rgb'] is not None:
-                for sm in already:
+                for sm in candidates:
                     if sm['rgb'] is None:
                         continue
                     d2 = ((tm['rgb'][0] - sm['rgb'][0]) ** 2
@@ -432,10 +432,8 @@ def match_colors_to_slots(color_names, live_slots, num_heads=4,
                     if best_d is None or d2 < best_d:
                         best_d, best = d2, sm
             if best is None:
-
-                best = already[0] if already else None
+                best = candidates[0] if candidates else None
             if best is None:
-
                 info[t] = {'tier': 'no_slot', 'slot': None, 'loose_mat': False}
                 pending.remove(t)
                 continue
@@ -443,7 +441,7 @@ def match_colors_to_slots(color_names, live_slots, num_heads=4,
             info[t] = {
                 'tier': 'duplicate',
                 'slot': s,
-                'loose_mat': bool(tm['mat']) and best['mat'] != tm['mat'],
+                'loose_mat': False,
             }
             pending.remove(t)
 

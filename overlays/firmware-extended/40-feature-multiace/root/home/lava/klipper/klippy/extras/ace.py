@@ -16,11 +16,11 @@ from .ace_protocol_v2 import AceProtocolV2
 
 KNOWN_PROTOCOLS = (AceProtocolV1, AceProtocolV2)
 
-MULTIACE_VERSION = "0.97b"
+MULTIACE_VERSION = "0.97.2b"
 MULTIACE_CODENAME = "Kindred Allies"
 
-MULTIACE_BUILD_TAG = "22c65a9"
-MULTIACE_BUNDLE_SHA1 = "bcfab1f"
+MULTIACE_BUILD_TAG = "cdd7bae-dirty"
+MULTIACE_BUNDLE_SHA1 = "444b732"
 
 def _load_i18n_catalog(i18n_dir, lang):
     """Read <i18n_dir>/<lang>.json overlaid on en.json. Returns a dict
@@ -72,7 +72,18 @@ class AceException(Exception):
 
 GATE_UNKNOWN = -1
 GATE_EMPTY = 0
-GATE_AVAILABLE = 1  
+GATE_AVAILABLE = 1
+
+# Seconds to keep V1 feed-assist dispatches out of the homing/probe
+# window. A V1 start_feed_assist is a synchronous ser.write on the
+# reactor thread; if it lands during a probe move (rtscts backpressure
+# while the ACE gearbox is busy) it stalls the reactor long enough to
+# trip the toolhead MCU's "Communication timeout during homing"
+# (exception id 528). We defer the dispatch while a homing move is
+# active and for this long after the last one ends, so it only fires
+# in a real gap. V2 writes go through a background writer thread and
+# never block the reactor, so they are never gated.
+FA_HOMING_SETTLE = 0.5
 
 class MultiAce:
     VARS_ACE_REVISION = 'ace__revision'
@@ -126,6 +137,12 @@ class MultiAce:
         self.feed_speed = config.getint('feed_speed', 50)
         self.retract_speed = config.getint('retract_speed', 50)
         self.retract_length = config.getint('retract_length', 100)
+        # When enabled, an ACE 2 (V2) unwind waits for the device to report
+        # the retract finished (slot leaves 'rollback' -> device 'ready',
+        # i.e. its own feed-port sensor cleared) instead of a fixed-length
+        # time dwell. retract_length then acts as a safety upper bound.
+        # V1 devices ignore this and keep the time-based behavior.
+        self.ace2_sensor_unload = config.getboolean('ace2_sensor_unload', False)
 
         self.feed_length = config.getint('feed_length', 0)
 
@@ -133,7 +150,16 @@ class MultiAce:
         self.load_retry = config.getint('load_retry', 3)              
         self.load_retry_retract = config.getint('load_retry_retract', 50)  
         self.max_dryer_temperature = config.getint('max_dryer_temperature', 55)
+        # Deprecated: extra_purge_length used to extrude extra filament AFTER
+        # the stock flush (additive only, could not reduce poop). No longer
+        # applied - kept here so existing configs don't error. Use
+        # swap_purge_length to control the flush volume instead.
         self.extra_purge_length = config.getfloat('extra_purge_length', 0, minval=0, maxval=200)
+        # Flush/purge length (mm) passed to the stock INNER_FLUSH_FILAMENT as
+        # LENGTH= at each swap/load flush. 0 = use the stock default (80mm).
+        # Lower it to reduce purge waste ("poop"). multiACE Pro can override
+        # it per swap (e.g. per colour-pair) via ACE_SET_PURGE.
+        self.swap_purge_length = config.getint('swap_purge_length', 0, minval=0, maxval=200)
 
         self.seat_overshoot_length = config.getint('seat_overshoot_length', 0, minval=0, maxval=100)
         self.swap_default_temp = config.getint('swap_default_temp', 250, minval=180, maxval=300)
@@ -175,6 +201,8 @@ class MultiAce:
         self._ace_section_load_length_slot = {}
         self._ace_section_retract_length = {}
         self._ace_section_retract_length_slot = {}
+        self._ace_section_swap_retract_length = {}
+        self._ace_section_swap_retract_length_slot = {}
         self._ace_section_feed_speed = {}
         self._ace_section_retract_speed = {}
         for ace_sec in config.get_prefix_sections('ace '):
@@ -189,6 +217,10 @@ class MultiAce:
             rl = ace_sec.getint('retract_length', None, minval=1)
             if rl is not None:
                 self._ace_section_retract_length[ace_i] = rl
+            # swap_retract_length override allows 0 (= use default retract).
+            srl = ace_sec.getint('swap_retract_length', None, minval=0, maxval=2000)
+            if srl is not None:
+                self._ace_section_swap_retract_length[ace_i] = srl
             fs = ace_sec.getint('feed_speed', None, minval=1)
             if fs is not None:
                 self._ace_section_feed_speed[ace_i] = fs
@@ -202,6 +234,10 @@ class MultiAce:
                 rl_s = ace_sec.getint('retract_length_%d' % slot_i, None, minval=1)
                 if rl_s is not None:
                     self._ace_section_retract_length_slot[(ace_i, slot_i)] = rl_s
+                srl_s = ace_sec.getint('swap_retract_length_%d' % slot_i, None,
+                                       minval=0, maxval=2000)
+                if srl_s is not None:
+                    self._ace_section_swap_retract_length_slot[(ace_i, slot_i)] = srl_s
 
         self.ace_dryer_temp = {}
         self.ace_dryer_duration = {}
@@ -222,12 +258,50 @@ class MultiAce:
         self._fa_load_disable = _parse_idx_list('fa_load_disable')
         self.fa_debug = config.getboolean('fa_debug', False)
 
+        # 0003 mitigation - homing-gate flag for the web daemon.
+        # Root cause: on SSH installs klippy runs from the writable eMMC
+        # overlay (copy-up), not the RAM-cached squashfs. The web's
+        # Moonraker polling adds I/O pressure that evicts klippy code
+        # pages; a major page fault in the ~50ms homing-probe window makes
+        # e3 miss the trsync window -> "Communication timeout during
+        # homing". ace.py touches this tmpfs flag on every homing move;
+        # the standalone web daemon checks its mtime and pauses its
+        # periodic /printer/objects/query while homing is active, taking
+        # the I/O pressure off the probe window. tmpfs (RAM) so the
+        # reactor-thread write is cheap and never hits eMMC.
+        self._homing_flag_path = config.get(
+            'homing_flag_path', '/tmp/multiace_homing_active')
+
         self._enable_ace_v2 = config.getboolean('enable_ace_v2', False)
 
         self._v2_order = config.getchoice('v2_order',
                                           {'usb': 'usb', 'first': 'first',
                                            'last': 'last'},
                                           'usb')
+
+        # V2 print-time feed-assist mode:
+        #   'constant' (default) - on extrusion just keep the ACE feed
+        #     assist running (forward); only flip to unwind on a sustained
+        #     reverse. No per-tick speed tracking -> the ACE pushes gently
+        #     and the filament follows the extruder's pull (no bowden
+        #     tension from the controller lagging the demand).
+        #   'tracked' - legacy: continuously quantize live_extruder_velocity
+        #     and push update_feeding_speed (can lag fast accel -> bowden
+        #     flexes when the extruder pulls faster than the ACE supplies).
+        self._v2_print_assist_mode = config.getchoice(
+            'v2_print_assist_mode',
+            {'constant': 'constant', 'tracked': 'tracked'},
+            'constant')
+        # Fixed feed speed (mm/s) sent ONCE when assist starts in constant
+        # mode. 0 = leave the ACE firmware's own default (most hakimio-like;
+        # the ACE decides). >0 = pin this speed once, never update again.
+        self._v2_constant_assist_speed = config.getint(
+            'v2_constant_assist_speed', 0, minval=0, maxval=50)
+        # Direction-confirmation window (s): in constant mode a reverse
+        # extruder velocity must persist this long before we flip the ACE
+        # to unwind, so brief slicer retracts don't cause mode churn.
+        self._v2_assist_confirm_time = config.getfloat(
+            'v2_assist_confirm_time', 0.5, minval=0.0, maxval=5.0)
 
         self._update_repo = config.get('update_repo', 'decay71/multiACE').strip()
         self._update_prerelease = config.getboolean('update_prerelease', False)
@@ -315,7 +389,15 @@ class MultiAce:
         self._auto_feed_enabled = False
         self._fa_context = 'idle'
 
+        # Homing/probe in-progress tracking (set from homing:* events).
+        # Used to defer V1 FA dispatches out of probe windows.
+        self._homing_active = False
+        self._last_homing_end = 0.0
+
         self._retract_length_override = None
+        # Per-swap flush length override (set by multiACE Pro / a setter
+        # command). None = fall back to the swap_purge_length config value.
+        self._purge_length_override = None
 
         self._last_unload_ok = True
         self._last_load_ok = True
@@ -338,8 +420,6 @@ class MultiAce:
             'multiace_wiggle', os.path.join(log_dir, 'multiace_wiggle.log'))
         self._fa_log = _setup_file_logger(
             'multiace_fa', os.path.join(log_dir, 'multiace_fa.log'))
-        self._web_log = _setup_file_logger(
-            'multiace_web', os.path.join(log_dir, 'multiace_web.log'))
         self._state_debug_enabled = config.getboolean('state_debug', False)
         self._usb_debug_enabled = config.getboolean('usb_debug', True)
 
@@ -428,13 +508,20 @@ class MultiAce:
         self.printer.register_event_handler('klippy:ready', self._handle_ready)
         self.printer.register_event_handler('klippy:disconnect', self._handle_disconnect)
 
-        try:
-            self.printer.add_object('ace_device', self)
-        except self.printer.config_error:
-            logging.info('[multiACE] ace_device alias already registered - skipping')
-
         self.printer.register_event_handler('print_stats:start', self._on_print_start)
         self.printer.register_event_handler('print_stats:stop', self._on_print_end)
+
+        # Every homing move (G28 axis home AND each probe sample via
+        # probing_move) is bracketed by these events; the inductance-coil
+        # bed-mesh / z-offset / flow-cal probes all go through
+        # HomingMove.homing_move(). We use them to keep V1 FA dispatches
+        # out of the probe window regardless of the Snapmaker action_code
+        # (bed-mesh probes run under action_code IDLE, so action_code
+        # gating alone would miss them).
+        self.printer.register_event_handler(
+            'homing:homing_move_begin', self._on_homing_move_begin)
+        self.printer.register_event_handler(
+            'homing:homing_move_end', self._on_homing_move_end)
 
         self.gcode.register_command(
             'ACE_START_DRYING', self.cmd_ACE_START_DRYING,
@@ -445,6 +532,9 @@ class MultiAce:
         self.gcode.register_command(
             'ACE_ENABLE_FEED_ASSIST', self.cmd_ACE_ENABLE_FEED_ASSIST,
             desc=self.cmd_ACE_ENABLE_FEED_ASSIST_help)
+        self.gcode.register_command(
+            'ACE_SET_PURGE', self.cmd_ACE_SET_PURGE,
+            desc=self.cmd_ACE_SET_PURGE_help)
         self.gcode.register_command(
             'ACE_DISABLE_FEED_ASSIST', self.cmd_ACE_DISABLE_FEED_ASSIST,
             desc=self.cmd_ACE_DISABLE_FEED_ASSIST_help)
@@ -621,7 +711,6 @@ class MultiAce:
         self._wiggle_log.setLevel(gated)
 
         self._fa_log.setLevel(logging.DEBUG if self.fa_debug else logging.WARNING)
-        self._web_log.setLevel(logging.DEBUG if self.fa_debug else logging.WARNING)
 
     def _t(self, key, **params):
         """
@@ -694,118 +783,209 @@ class MultiAce:
         self._free_web_port()
 
     def _free_web_port(self):
-        """Ensure port self._web_port is free. Tries fuser -k as a
-        last resort if pidfile-based cleanup didn't catch every
-        listener. Uses busybox-compatible 'PORT/PROTO' syntax (not
-        GNU fuser's '-n tcp PORT' form). Silent if the port is
-        already free or fuser isn't available."""
+        """Ensure port self._web_port is free. Tries fuser first, then
+        falls back to pkill matching the uvicorn cmdline - fuser is absent
+        on some firmware builds (e.g. 1.4), which previously left a stale
+        uvicorn holding the port so every respawn failed to bind. Silent if
+        the port is already free."""
         import socket, subprocess
         port_spec = '%d/tcp' % self._web_port
-        for _ in range(2):
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(0.2)
+
+        def _port_busy():
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.2)
             try:
-                rc = sock.connect_ex(('127.0.0.1', self._web_port))
+                return s.connect_ex(('127.0.0.1', self._web_port)) == 0
             finally:
-                sock.close()
-            if rc != 0:
+                s.close()
+
+        def _evict(sig):
+            # fuser may not exist on this firmware; pkill always does and
+            # matches our 'python3 -m uvicorn main:app ...' command line.
+            for cmd in (['fuser', '-k', '-%s' % sig, port_spec],
+                        ['pkill', '-%s' % sig, '-f', 'uvicorn.*main:app']):
+                try:
+                    subprocess.run(
+                        cmd, stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL, timeout=3, check=False)
+                except (FileNotFoundError, subprocess.TimeoutExpired):
+                    continue
+                except Exception:
+                    continue
+
+        for _ in range(2):
+            if not _port_busy():
                 return
-            try:
-                subprocess.run(
-                    ['fuser', '-k', '-TERM', port_spec],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    timeout=3, check=False)
-                logging.info('[multiACE] web port %d held by other process, '
-                             'evicted via fuser', self._web_port)
-            except (FileNotFoundError, subprocess.TimeoutExpired):
-                return
-            except Exception:
-                return
+            _evict('TERM')
+            logging.info('[multiACE] web port %d held by other process, '
+                         'evicted (TERM)', self._web_port)
             time.sleep(0.5)
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(0.2)
+        if _port_busy():
+            _evict('KILL')
+            logging.info('[multiACE] web port %d still held, sent KILL',
+                         self._web_port)
+            time.sleep(0.3)
+
+    _WEB_INITD = '/etc/init.d/S98multiace-web'
+
+    def _web_port_busy(self):
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.3)
         try:
-            rc = sock.connect_ex(('127.0.0.1', self._web_port))
+            return s.connect_ex(('127.0.0.1', self._web_port)) == 0
+        except OSError:
+            return False
         finally:
-            sock.close()
-        if rc == 0:
-            try:
-                subprocess.run(
-                    ['fuser', '-k', '-KILL', port_spec],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    timeout=3, check=False)
-                logging.info('[multiACE] web port %d still held, sent SIGKILL',
-                             self._web_port)
-                time.sleep(0.3)
-            except Exception:
-                pass
+            s.close()
+
+    def _kill_own_klippy_web(self):
+        """Kill ONLY a web head this Klipper instance spawned itself in a
+        previous (older) version - tracked by _WEB_PIDFILE. That process
+        is owned by lava and therefore killable by us. We must never
+        touch a web head started by the S98 init daemon at boot (runs as
+        root, different/no pidfile) - that one is the correct standalone
+        instance and lava can't kill it anyway. Returns True if we killed
+        our own old child."""
+        import signal
+        try:
+            with open(self._WEB_PIDFILE, 'r') as f:
+                pid = int((f.read() or '0').strip())
+        except (FileNotFoundError, ValueError, OSError):
+            return False
+        if pid <= 0:
+            return False
+        killed = False
+        try:
+            os.kill(pid, signal.SIGTERM)
+            killed = True
+        except ProcessLookupError:
+            pass
+        except OSError:
+            return False
+        if killed:
+            for _ in range(40):
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            else:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            logging.info('[multiACE] web: stopped own old klippy-child pid %d', pid)
+        try:
+            os.unlink(self._WEB_PIDFILE)
+        except OSError:
+            pass
+        return killed
 
     def _spawn_multiace_web(self):
         """
-        Launch the multiACE Web FastAPI service. Always kills any old
-        instance first so Klipper-restart cycles pick up backend updates.
+        Start the multiACE Web FastAPI service via the standalone init
+        daemon (/etc/init.d/S98multiace-web).
+
+        The web head must NOT run as a Klipper child: a child uvicorn
+        shares the reactor's scheduling context and intermittently steals
+        the ~50ms multi-MCU homing-probe margin from toolhead e3, tripping
+        0003 "Communication timeout during homing". So ace.py only ever
+        (re)starts the standalone S98 daemon, never spawns uvicorn itself.
+
+        Ownership rules (U1 has NO sudo; klippy/ace.py run as lava):
+          - baked image: S98 already started the web at boot as root
+            (ppid 1) -> port 7126 busy by a root process we can't (and
+            must not) touch. We leave it: the online updater needs that
+            root instance, and it's already correct. Do nothing.
+          - SSH install: S98 is skipped at boot (overlay mounts after the
+            rcS S?? scan), so nothing is listening -> we start S98 as lava.
+            The web runs as lava; that's fine - the installer chowns the
+            klipper dirs to lava so the lava web head can still apply
+            online updates (see multiace_update.sh writability check).
+          - upgrade from an older ace.py that spawned a Klipper-child
+            uvicorn: that child (ours, lava-owned, tracked by _WEB_PIDFILE)
+            may still hold 7126. We kill only that one, then start S98.
         """
         if not self._enable_web:
             return
-        self._stop_old_web()
-        import subprocess
         backend = os.path.join(self._web_dir, 'backend')
-        frontend = os.path.join(self._web_dir, 'frontend')
         if not os.path.isdir(backend) or not os.path.isfile(os.path.join(backend, 'main.py')):
             logging.info('[multiACE] web not installed at %s - skip', self._web_dir)
             return
-        log_path = '/home/lava/printer_data/logs/multiace_web.log'
-        try:
-            log_fd = open(log_path, 'a', buffering=1)
-        except Exception:
-            log_fd = subprocess.DEVNULL
-        env = dict(os.environ)
-        env.update({
-            'HOME':                       '/home/lava',
-            'USER':                       'lava',
-            'PATH':                       '/home/lava/.local/bin:/usr/bin:/bin',
-            'PYTHONUNBUFFERED':           '1',
-            'MOONRAKER_URL':              'http://127.0.0.1:7125',
-            'MULTIACE_CFG_PATH':          '/home/lava/printer_data/config/extended/ace.cfg',
-            'MULTIACE_FRONTEND_DIR':      frontend,
-            'MULTIACE_I18N_DIR':          os.path.join(self._web_dir, 'i18n'),
-            'MULTIACE_LANGUAGE':          self._language,
-            'MULTIACE_DISPLAY_INDEX_BASE': str(self._display_index_base),
-            'MULTIACE_WEB_VERSION':       '%s+%s' % (MULTIACE_VERSION, MULTIACE_BUILD_TAG),
-        })
-        try:
-            p = subprocess.Popen(
-                ['/usr/bin/python3', '-m', 'uvicorn', 'main:app',
-                 '--host', '127.0.0.1',
-                 '--port', str(self._web_port),
-                 '--log-level', 'warning'],
-                cwd=backend,
-                env=env,
-                stdout=log_fd,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                close_fds=True,
-                start_new_session=True,
-            )
-        except Exception as e:
-            logging.info('[multiACE] web spawn failed: %s', e)
+        if not os.path.isfile(self._WEB_INITD):
+            logging.info('[multiACE] web init script %s missing - web not '
+                         'started. Run install_multiace.sh --install-web.',
+                         self._WEB_INITD)
             return
+        if self._web_port_busy():
+            # Something already serves :7126. If it is our own old
+            # klippy-child, replace it; otherwise (S98 root daemon from
+            # boot) leave it running untouched.
+            if self._kill_own_klippy_web():
+                for _ in range(20):
+                    if not self._web_port_busy():
+                        break
+                    time.sleep(0.1)
+            if self._web_port_busy():
+                logging.info('[multiACE] web already running on :%d '
+                             '(standalone daemon) - leaving it untouched',
+                             self._web_port)
+                self.log_always(self._t('msg.web_running'))
+                return
+        # Port is free -> start the standalone daemon. Run via 'sh' so it
+        # works even if the init script is root-only (-rwx------): ace.py
+        # runs as lava and can't exec it directly, but sh can read+run it.
+        import subprocess
         try:
-            with open(self._WEB_PIDFILE, 'w') as f:
-                f.write(str(p.pid))
+            subprocess.run(['sh', self._WEB_INITD, 'start'],
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL,
+                           timeout=45, check=False)
+            logging.info('[multiACE] web started via init daemon %s '
+                         '(standalone, not a Klipper child)', self._WEB_INITD)
+            self.log_always(self._t('msg.web_running'))
         except Exception as e:
-            logging.info('[multiACE] web pidfile write failed: %s', e)
-        logging.info('[multiACE] web spawned pid=%d on :%d (cwd=%s)',
-                     p.pid, self._web_port, backend)
-        self.log_always(self._t('msg.web_running'))
+            logging.info('[multiACE] init-daemon web start failed: %s', e)
 
-    def disable_ap(self):
-        return True
+    def _disable_stock_entangle_detect(self):
+        for head in range(4):
+            ed = self.printer.lookup_object(
+                'filament_entangle_detect e%d_filament' % head, None)
+            if ed is None or not hasattr(ed, 'skip_entangle_check'):
+                continue
+            try:
+                ed.skip_entangle_check(True)
+                logging.info(
+                    '[multiACE] disabled stock filament_entangle_detect '
+                    'on head %d (incompatible with ACE topology)' % head)
+            except Exception as e:
+                logging.info(
+                    '[multiACE] failed to disable filament_entangle_detect '
+                    'on head %d: %s' % (head, e))
+
+    def _touch_homing_flag(self):
+        """Refresh the tmpfs homing-gate flag's mtime. The web daemon
+        pauses its Moonraker polling while this flag is fresh, keeping
+        I/O pressure off the homing-probe window (0003 mitigation).
+        Cheap RAM write on the reactor thread; never fatal."""
+        try:
+            with open(self._homing_flag_path, 'w') as f:
+                f.write('1')
+        except Exception:
+            pass
+
+    def _clear_homing_flag(self):
+        try:
+            os.unlink(self._homing_flag_path)
+        except OSError:
+            pass
 
     def _handle_ready(self):
         self.toolhead = self.printer.lookup_object('toolhead')
 
+        self._clear_homing_flag()
         self._spawn_multiace_web()
 
         self._refresh_slot_overrides()
@@ -816,7 +996,6 @@ class MultiAce:
             if fd is not None and ptc is not None:
                 orig_cb = ptc._rfid_filament_info_update_cb
                 def _multiace_rfid_cb(channel, info, is_clear=False, _orig=orig_cb):
-
                     has_content = bool(
                         (info.get('VENDOR') or '').strip()
                         or (info.get('MAIN_TYPE') or '').strip()
@@ -887,6 +1066,8 @@ class MultiAce:
                 'extruder:activate_extruder', self._on_extruder_change)
         else:
             logging.info('[multiACE] SingleACE mode - no head_source tracking')
+
+        self._disable_stock_entangle_detect()
 
         self._refresh_ace_devices('startup')
 
@@ -1026,6 +1207,26 @@ class MultiAce:
         if v is not None:
             return v
         return self.retract_length
+
+    def get_swap_retract_length(self, ace_idx, slot):
+        """Swap unload retract length with per-ACE/per-slot override
+        priority, falling back to the global swap_retract_length. A value
+        of 0 (empty or explicit) means 'use the normal default retract'."""
+        v = self._ace_section_swap_retract_length_slot.get((ace_idx, slot))
+        if v is not None:
+            return v
+        v = self._ace_section_swap_retract_length.get(ace_idx)
+        if v is not None:
+            return v
+        return self.swap_retract_length
+
+    def get_purge_length(self):
+        """Flush LENGTH for the stock INNER_FLUSH_FILAMENT. A per-swap
+        override (multiACE Pro) wins, else the swap_purge_length config
+        value. 0 means 'use the stock default' (caller omits LENGTH=)."""
+        if self._purge_length_override is not None:
+            return self._purge_length_override
+        return self.swap_purge_length
 
     def get_feed_speed(self, ace_idx):
         """Lookup feed_speed with [ace N] override, falling back to [ace]."""
@@ -1244,14 +1445,6 @@ class MultiAce:
     def log_always(self, msg: str, color=False):
         c_msg = self._color_message(msg) if color else msg
         self.gcode.respond_raw(c_msg)
-        # When fa_debug is on, mirror to multiace_web.log so silent
-        # early-return paths in cmd_ACE_SWITCH / cmd_ACE_LOAD_HEAD
-        # (only surface via gcode.respond_raw) are diagnosable after
-        # the fact, without spamming klippy.log or Mainsail.
-        try:
-            self._web_log.info(msg)
-        except Exception:
-            pass
 
     def log_error(self, msg):
         self.error_msg = msg
@@ -1920,6 +2113,54 @@ class MultiAce:
                 except Exception:
                     pass
 
+    def _on_homing_move_begin(self, hmove):
+        self._homing_active = True
+        self._touch_homing_flag()
+
+    def _on_homing_move_end(self, hmove):
+        self._homing_active = False
+        self._last_homing_end = self.reactor.monotonic()
+        # Keep the flag fresh through the end of the move; the web daemon
+        # expires it on its own short TTL, so one touch per begin/end
+        # covers bed mesh (which fires begin/end per probe point in quick
+        # succession).
+        self._touch_homing_flag()
+
+    def _v1_fa_blocked_by_homing(self, idx):
+        """True when a V1 FA dispatch must wait: this ACE is V1 and a
+        homing/probe move is active or ended less than FA_HOMING_SETTLE
+        ago. V2 is never blocked (its writes don't run on the reactor
+        thread)."""
+        proto = self._protocols.get(idx)
+        if proto is None or getattr(proto, 'NAME', None) != 'v1':
+            return False
+        if self._homing_active:
+            return True
+        return (self.reactor.monotonic() - self._last_homing_end) < FA_HOMING_SETTLE
+
+    def _wait_homing_clear(self, timeout=60.0):
+        """Defer an ad-hoc device command (e.g. the dryer, triggered from the
+        web mid print-start) until any homing/probe window clears, so its
+        synchronous V1 serial write can't stall the probe's trsync - which
+        otherwise surfaces as 0003-0528 'Communication timeout during homing'.
+        Yields via reactor.pause so homing keeps running; bounded by timeout so
+        it can never hang. No-op when no homing is active/recent. Do NOT use
+        this for commands that themselves home (LOAD/UNLOAD/SWAP) - they would
+        wait on their own homing."""
+        deadline = time.monotonic() + timeout
+        waited = False
+        while self._homing_active or \
+                (self.reactor.monotonic() - self._last_homing_end) < FA_HOMING_SETTLE:
+            if time.monotonic() > deadline:
+                self.log_error(
+                    '[multiACE] homing-clear wait timed out (%.0fs) - proceeding'
+                    % timeout)
+                break
+            waited = True
+            self.reactor.pause(self.reactor.monotonic() + 0.1)
+        if waited:
+            self._fa_trace('command deferred until homing/probe finished')
+
     def _arm_fa_for(self, idx, slot):
         self._fa_trace('_arm_fa_for(idx=%d, slot=%d) called; gate=%s context=%s'
                        % (idx, slot, self._auto_feed_enabled, self._fa_context))
@@ -2042,6 +2283,25 @@ class MultiAce:
             return start_callback
 
         def _send_start():
+            # Keep the synchronous V1 write out of any homing/probe
+            # window (see FA_HOMING_SETTLE). Re-defer until the probe
+            # sequence has a gap; during a print there are no homing
+            # moves so this never delays normal FA arming.
+            if self._v1_fa_blocked_by_homing(idx):
+                self._fa_trace(
+                    'FA start deferred (homing active/recent): ACE %d slot %d'
+                    % (idx, slot))
+                def _retry_after_homing(eventtime):
+                    if not self._auto_feed_enabled:
+                        return self.reactor.NEVER
+                    if self._feed_assist_per_ace.get(idx, -1) != slot:
+                        return self.reactor.NEVER
+                    _send_start()
+                    return self.reactor.NEVER
+                self.reactor.register_timer(
+                    _retry_after_homing,
+                    self.reactor.monotonic() + FA_HOMING_SETTLE)
+                return
             try:
                 self.send_request_to(idx,
                     {"method": "start_feed_assist", "params": {"index": slot}},
@@ -2595,6 +2855,63 @@ class MultiAce:
                     '[v2-vel] ace=%d slot=%d %s vel=%+.2f q=%d dir=%s (hb)' % (
                         idx, armed_slot, armed_status, v, quantum, direction))
 
+            # Constant-assist mode (default): don't track/quantize the
+            # extruder velocity at all. Once assisting, let the ACE keep
+            # feeding (forward); only flip to unwind when a reverse
+            # velocity is sustained past the confirm window. This stops
+            # the controller from lagging fast extruder accel (which made
+            # the bowden flex when the extruder out-pulled the ACE).
+            if (self._v2_print_assist_mode == 'constant'
+                    and armed_status in ('assisting', 'rollback_assisting')):
+                cdisp = state.setdefault('cdispatch', {
+                    'mode': 2,            # 2=feed(fwd), 3=unwind(rev)
+                    'cand_dir': 'fwd',
+                    'cand_since': eventtime,
+                    'speed_pinned': False,
+                })
+                # Pin a fixed speed once, if configured (>0). 0 leaves the
+                # ACE firmware default untouched.
+                if (not cdisp['speed_pinned']
+                        and self._v2_constant_assist_speed > 0):
+                    cdisp['speed_pinned'] = True
+                    spd = self._v2_constant_assist_speed
+                    self._fa_log.info(
+                        '[v2-vel] ace=%d slot=%d constant-assist pin speed=%d'
+                        % (idx, armed_slot, spd))
+                    try:
+                        self.send_request_to(idx, {
+                            'method': 'update_feeding_speed',
+                            'params': {'index': armed_slot, 'speed': spd},
+                        }, None)
+                    except Exception as e:
+                        self._fa_log.info(
+                            '[v2-vel] constant pin enqueue failed: %s' % e)
+                # Direction confirm: require sustained reverse before flip.
+                if direction != cdisp['cand_dir']:
+                    cdisp['cand_dir'] = direction
+                    cdisp['cand_since'] = eventtime
+                held = eventtime - cdisp['cand_since']
+                want_mode = 2 if direction == 'fwd' else 3
+                if (want_mode != cdisp['mode']
+                        and held >= self._v2_assist_confirm_time):
+                    cdisp['mode'] = want_mode
+                    if getattr(self, '_v2_active_rev_assist', False):
+                        self._v2_dispatch_mode_switch(
+                            idx, armed_slot, want_mode,
+                            state.setdefault('dispatch', {
+                                'last_speed': None, 'last_mode': 2,
+                                'candidate_speed': quantum,
+                                'candidate_dir': direction,
+                                'candidate_since': eventtime}),
+                            held, current_v=v)
+                    else:
+                        self._fa_log.info(
+                            '[v2-vel] ace=%d slot=%d constant: dir=%s '
+                            'sustained %.2fs - mode->%d (no dispatch, '
+                            'not in unload)'
+                            % (idx, armed_slot, direction, held, want_mode))
+                return eventtime + 0.1
+
             HYSTERESIS_S = 0.1
             if armed_status in ('assisting', 'rollback_assisting'):
                 disp = state.setdefault('dispatch', {
@@ -2978,6 +3295,8 @@ class MultiAce:
         if temperature <= 0 or temperature > self.max_dryer_temperature:
             raise gcmd.error('Wrong temperature')
 
+        self._wait_homing_clear()
+
         def callback(self, response):
             if response.get('code', 0) != 0:
                 self.log_error(self._t('msg.ace_error_generic', error=response.get('msg')))
@@ -2998,6 +3317,8 @@ class MultiAce:
         if ace_idx < 0 or ace_idx >= len(self._ace_devices):
             self.log_always(self._t('msg.ace_not_available', ace=self._disp(ace_idx)))
             return
+
+        self._wait_homing_clear()
 
         def callback(self, response):
             if response is None:
@@ -3118,7 +3439,60 @@ class MultiAce:
         self.send_request(
             request={"method": "unwind_filament", "params": {"index": index, "length": length, "speed": speed}},
             callback=callback)
-        self.dwell(delay=(length / speed) + 0.1)
+        is_v2 = proto is not None and getattr(proto, 'NAME', None) == 'v2'
+        if is_v2 and self.ace2_sensor_unload:
+            self._wait_unwind_sensor(idx, index, length, speed)
+        else:
+            self.dwell(delay=(length / speed) + 0.1)
+
+    def _wait_unwind_sensor(self, idx, slot, length, speed):
+        # ACE 2 retracts autonomously until its feed-port sensor clears.
+        # The host observes this as the slot leaving 'rollback'/'feeding'
+        # and the device returning to 'ready'. The commanded length is only
+        # an upper bound here, so wait for the real completion rather than a
+        # fixed time. Falls back to a length/speed time budget if the status
+        # never settles (e.g. device firmware that doesn't report rollback).
+        budget = (length / float(speed)) + 5.0
+        deadline = time.monotonic() + budget
+
+        def _state():
+            info = self._info_per_ace.get(idx)
+            if info is None:
+                return None, None
+            slots = info.get('slots', [])
+            ss = slots[slot].get('slot_status') if slot < len(slots) else None
+            return info.get('status'), ss
+
+        # Phase 1: wait until the device acknowledges the rollback (goes
+        # busy / slot enters rollback) so a stale 'ready' from before the
+        # command landed doesn't end the wait immediately. Bounded so a
+        # near-instant clear doesn't hang here.
+        busy_deadline = time.monotonic() + 2.0
+        while time.monotonic() < busy_deadline:
+            dev, ss = _state()
+            if dev is None:
+                return
+            if dev == 'busy' or ss in ('rollback', 'feeding'):
+                break
+            self.reactor.pause(self.reactor.monotonic() + 0.1)
+
+        # Phase 2: wait until the slot returns to idle (port cleared) or the
+        # upper-bound time budget elapses.
+        while True:
+            dev, ss = _state()
+            if dev is None:
+                return
+            if dev == 'ready' and ss not in ('rollback', 'feeding'):
+                self._fa_trace('unwind sensor-complete: ACE %d slot %d'
+                               % (idx, slot))
+                return
+            if time.monotonic() > deadline:
+                self.log_error(
+                    '[multiACE] ACE %d slot %d sensor-unload wait hit time '
+                    'bound (%.1fs) - device did not report ready'
+                    % (idx, slot, budget))
+                return
+            self.reactor.pause(self.reactor.monotonic() + 0.2)
 
     def retract_fil(self, index):
 
@@ -3724,6 +4098,25 @@ class MultiAce:
         self.gcode.run_script_from_command(
             "SAVE_VARIABLE VARIABLE=%s VALUE='%s'"
             % (self.VARS_ACE_HEAD_SOURCE, value_str))
+
+    cmd_ACE_SET_PURGE_help = (
+        '[multiACE] Set the swap/load flush length (mm) for the next '
+        'flush(es). Usage: ACE_SET_PURGE LENGTH=<mm>  or  ACE_SET_PURGE '
+        'RESET=1 to fall back to the swap_purge_length config value. '
+        'Intended for multiACE Pro to set per-colour-pair purge from the '
+        'slicer. LENGTH=0 = use the stock default (80mm).')
+
+    def cmd_ACE_SET_PURGE(self, gcmd):
+        if gcmd.get_int('RESET', 0):
+            self._purge_length_override = None
+            self.log_always('[multiACE] purge length override cleared '
+                            '(using swap_purge_length=%d)'
+                            % self.swap_purge_length)
+            return
+        length = gcmd.get_int('LENGTH', minval=0, maxval=200)
+        self._purge_length_override = length
+        self.log_always('[multiACE] purge length override set to %d mm%s'
+                        % (length, ' (stock default)' if length == 0 else ''))
 
     def _ensure_ace_available(self, ace_index):
 
@@ -4503,13 +4896,33 @@ class MultiAce:
             logging.info('[multiACE] Swap: HEAD %d already on ACE %d / Slot %d - skipping' % (
                 head, ace_index, slot))
 
+            # Only (re)heat when this head is the active toolhead. A real
+            # mid-print swap-back onto an already-loaded head is always
+            # preceded by a T<head> (post_process rewrite() emits
+            # "T%d\nACE_SWAP_HEAD ..."), so the head is active and needs
+            # extrusion heat. Pre-print head-picking, by contrast, calls
+            # ACE_SWAP_HEAD for every loaded head with no T in between
+            # (inject_auto_load emits bare swaps), leaving the active
+            # toolhead unchanged - heating those would needlessly hold
+            # idle heads at load_temp for the whole print (and stall the
+            # print start ~20-30s per head on TEMPERATURE_WAIT).
+            try:
+                active_ext = self.toolhead.get_extruder().get_name()
+                active_head = (0 if active_ext == 'extruder'
+                               else int(active_ext.replace('extruder', '')))
+            except Exception:
+                active_head = None
             swap_temp = self._get_swap_temp(head)
-            if swap_temp >= 170:
+            if head == active_head and swap_temp >= 170:
                 heater = 'extruder' if head == 0 else 'extruder%d' % head
                 self.gcode.run_script_from_command(
                     'SET_HEATER_TEMPERATURE HEATER=%s TARGET=%d' % (heater, swap_temp))
                 self.gcode.run_script_from_command(
                     'TEMPERATURE_WAIT SENSOR=%s MINIMUM=%d' % (heater, swap_temp - 5))
+            elif head != active_head:
+                logging.info('[multiACE] Swap: HEAD %d not active toolhead '
+                             '(active=%s) - skip pre-heat to avoid holding '
+                             'idle head at load_temp' % (head, active_head))
             return
 
         if ace_index in self._fa_load_disable:
@@ -4636,12 +5049,20 @@ class MultiAce:
 
                 logging.info('[multiACE] Swap: delegating unload to ACE_UNLOAD_HEAD')
                 unload_start_ts = time.monotonic()
-                if self.swap_retract_length > 0:
+                if prev_source:
+                    _src_ace = int(prev_source.get('ace_index',
+                                                   self._active_device_index))
+                    _src_slot = int(prev_source.get('slot', head))
+                else:
+                    _src_ace = self._active_device_index
+                    _src_slot = head
+                swap_rl = self.get_swap_retract_length(_src_ace, _src_slot)
+                if swap_rl > 0:
                     self.gcode.run_script_from_command(
                         'ACE_UNLOAD_HEAD HEAD=%d RETRACT_LENGTH=%d KEEP_HEAT=%d' % (
-                            head, self.swap_retract_length, swap_temp))
+                            head, swap_rl, swap_temp))
                     logging.info('[multiACE] Swap: unload done (retract %dmm, heat held @ %d)' % (
-                        self.swap_retract_length, swap_temp))
+                        swap_rl, swap_temp))
                 else:
                     self.gcode.run_script_from_command(
                         'ACE_UNLOAD_HEAD HEAD=%d KEEP_HEAT=%d' % (head, swap_temp))
@@ -5553,6 +5974,7 @@ class MultiAce:
             return
         temp = gcmd.get_int('TEMP', self.ace_dryer_temp.get(ace_idx, self.dryer_temp))
         duration = gcmd.get_int('DURATION', self.ace_dryer_duration.get(ace_idx, self.dryer_duration))
+        self._wait_homing_clear()
         self.gcode.run_script_from_command('ACE_SWITCH TARGET=%d' % ace_idx)
         self.gcode.run_script_from_command('ACE_START_DRYING TEMP=%d DURATION=%d' % (temp, duration))
         self.log_always(self._t('msg.drying_ace_at',
@@ -5727,15 +6149,20 @@ class MultiAce:
         ACE_HEAD_STATUS compares this runtime value against the baked-in
         MULTIACE_BUNDLE_SHA1 (set by the hook at commit time). Mismatch
         means at least one of the bundled deploy files is stale on disk.
+
+        ace.cfg is intentionally excluded: install_multiace.sh merges
+        user values from the existing cfg into the shipped defaults
+        (default behavior) or leaves the file untouched (--keep-config),
+        so per-install ace.cfg legitimately diverges from the repo
+        version. Including it here would produce a false MISMATCH on
+        every healthy deploy.
         """
         extras_dir = os.path.dirname(os.path.abspath(__file__))
         kinematics_dir = os.path.join(os.path.dirname(extras_dir), 'kinematics')
-        config_dir = '/home/lava/printer_data/config/extended'
         bundle_paths = [
             os.path.join(extras_dir, 'filament_feed.py'),
             os.path.join(extras_dir, 'filament_switch_sensor.py'),
             os.path.join(kinematics_dir, 'extruder.py'),
-            os.path.join(config_dir, 'ace.cfg'),
         ]
         h = hashlib.sha1()
         for p in bundle_paths:
@@ -6285,7 +6712,10 @@ class MultiAce:
             'gate_status': self.gate_status,
             'active_device': self._active_device_index,
             'device_count': len(self._ace_devices),
-            'head_source': self._head_source,
+            # str keys: 1.4's status encoder rejects non-str dict keys
+            # ("Dict key must be str"). The web backend reads both str and
+            # int keys, so this is backward-compatible.
+            'head_source': {str(k): v for k, v in self._head_source.items()},
             'swap_in_progress': self._swap_in_progress,
             'aces': aces,
         }

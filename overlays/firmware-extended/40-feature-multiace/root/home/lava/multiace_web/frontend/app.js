@@ -484,7 +484,9 @@ createApp({
       }
       enqueue("ACE_LOAD_HEAD", {HEAD: slotIdx, ACE: aceIdx});
     }
-    const pickerMaterials = [
+    // Default/fallback list; the live list is loaded from /api/materials
+    // (a user-editable materials.json) so users can extend it themselves.
+    const pickerMaterials = ref([
       "PLA", "PLA+", "PLA-CF",
       "PETG", "PETG-CF", "PETG-HF",
       "ABS", "ASA",
@@ -492,7 +494,18 @@ createApp({
       "PA", "PA-CF", "PA-GF", "PA6-CF", "PA6-GF",
       "PC", "PC-ABS",
       "PVA",
-    ];
+    ]);
+    async function loadMaterials() {
+      try {
+        const r = await fetch(`${API}/materials`);
+        if (r.ok) {
+          const j = await r.json();
+          if (Array.isArray(j.materials) && j.materials.length) {
+            pickerMaterials.value = j.materials;
+          }
+        }
+      } catch (_) {}
+    }
     const picker = reactive({
       show: false,
       ace: 0,
@@ -761,9 +774,11 @@ createApp({
       load_length: 2100,
       retract_length: 1950,
       swap_retract_length: '',
+      swap_purge_length: '',
       dryer_temp: '',
       dryer_duration: '',
       display_index_base: 0,
+      v2_order: 'first',
       load_retry: '',
       extrusion_retry: '',
       unload_retry: '',
@@ -775,12 +790,12 @@ createApp({
     function _makePerAceEntry() {
       const perSlot = [];
       for (let s = 0; s < 4; s++) {
-        perSlot.push({load_length: '', retract_length: ''});
+        perSlot.push({load_length: '', retract_length: '', swap_retract_length: ''});
       }
       return {
         dryer_temp: '', dryer_duration: '',
         feed_speed: '', retract_speed: '',
-        load_length: '', retract_length: '',
+        load_length: '', retract_length: '', swap_retract_length: '',
         perSlot,
       };
     }
@@ -806,9 +821,11 @@ createApp({
       configForm.load_length    = num('load_length');
       configForm.retract_length = num('retract_length');
       configForm.swap_retract_length = numOrEmpty(params.swap_retract_length);
+      configForm.swap_purge_length = numOrEmpty(params.swap_purge_length);
       configForm.dryer_temp        = numOrEmpty(params.dryer_temp);
       configForm.dryer_duration    = numOrEmpty(params.dryer_duration);
       configForm.display_index_base = numOrEmpty(params.display_index_base);
+      configForm.v2_order = (params.v2_order === 'last') ? 'last' : 'first';
       configForm.load_retry        = numOrEmpty(params.load_retry);
       configForm.extrusion_retry   = numOrEmpty(params.extrusion_retry);
       configForm.unload_retry      = numOrEmpty(params.unload_retry);
@@ -827,9 +844,11 @@ createApp({
         configForm.perAce[i].retract_speed  = numOrEmpty(aceSec.retract_speed);
         configForm.perAce[i].load_length    = numOrEmpty(aceSec.load_length);
         configForm.perAce[i].retract_length = numOrEmpty(aceSec.retract_length);
+        configForm.perAce[i].swap_retract_length = numOrEmpty(aceSec.swap_retract_length);
         for (let s = 0; s < 4; s++) {
           configForm.perAce[i].perSlot[s].load_length    = numOrEmpty(aceSec[`load_length_${s}`]);
           configForm.perAce[i].perSlot[s].retract_length = numOrEmpty(aceSec[`retract_length_${s}`]);
+          configForm.perAce[i].perSlot[s].swap_retract_length = numOrEmpty(aceSec[`swap_retract_length_${s}`]);
         }
       }
     }
@@ -843,9 +862,11 @@ createApp({
         load_length:        numStr(configForm.load_length),
         retract_length:     numStr(configForm.retract_length),
         swap_retract_length: numStr(configForm.swap_retract_length),
+        swap_purge_length:   numStr(configForm.swap_purge_length),
         dryer_temp:         numStr(configForm.dryer_temp),
         dryer_duration:     numStr(configForm.dryer_duration),
         display_index_base: numStr(configForm.display_index_base),
+        v2_order:           configForm.v2_order === 'last' ? 'last' : 'first',
         load_retry:         numStr(configForm.load_retry),
         extrusion_retry:    numStr(configForm.extrusion_retry),
         unload_retry:       numStr(configForm.unload_retry),
@@ -866,9 +887,11 @@ createApp({
         sec.retract_speed  = numStr(p.retract_speed);
         sec.load_length    = numStr(p.load_length);
         sec.retract_length = numStr(p.retract_length);
+        sec.swap_retract_length = numStr(p.swap_retract_length);
         for (let s = 0; s < 4; s++) {
           sec[`load_length_${s}`]    = numStr(p.perSlot[s].load_length);
           sec[`retract_length_${s}`] = numStr(p.perSlot[s].retract_length);
+          sec[`swap_retract_length_${s}`] = numStr(p.perSlot[s].swap_retract_length);
         }
         perAceRepl[i] = sec;
       }
@@ -953,7 +976,29 @@ createApp({
       for (let i = 0; i < configForm.perAce.length; i++) {
         insertMissing(`[ace ${i}]`, perAceRepl[i], seenSet(i));
       }
-      return out.join('\n');
+      const cleaned = [];
+      for (let i = 0; i < out.length; i++) {
+        const m = out[i].match(/^\s*\[ace\s+\d+\]\s*$/);
+        if (!m) { cleaned.push(out[i]); continue; }
+        let j = i + 1;
+        let hasContent = false;
+        while (j < out.length && !/^\s*\[.+\]\s*$/.test(out[j])) {
+          const s = out[j].trim();
+          if (s !== '' && !s.startsWith('#') && !s.startsWith(';')) {
+            hasContent = true;
+          }
+          j++;
+        }
+        if (hasContent) {
+          cleaned.push(out[i]);
+          continue;
+        }
+        if (cleaned.length && cleaned[cleaned.length - 1].trim() === '') {
+          cleaned.pop();
+        }
+        i = j - 1;
+      }
+      return cleaned.join('\n');
     }
     const updateState = reactive({
       current: "",
@@ -1288,11 +1333,6 @@ createApp({
         name_base:        "name·base",
         name_canon:       "name·synonym",
         fuzzy:            "fuzzy",
-        loose_exact_hex:  "loose-mat·exact",
-        loose_name_exact: "loose-mat·name",
-        loose_name_base:  "loose-mat·name·base",
-        loose_name_canon: "loose-mat·name·synonym",
-        loose_fuzzy:      "loose-mat·fuzzy",
         fallback:         "fallback ⚠",
         duplicate:        "duplicate ⚠",
         no_slot:          "no slot ⚠",
@@ -1300,8 +1340,7 @@ createApp({
       return t_map[tier] || tier;
     }
     function tierWarn(tier) {
-      return tier && (tier.startsWith("loose_")
-                      || tier === "fallback"
+      return tier && (tier === "fallback"
                       || tier === "duplicate"
                       || tier === "no_slot");
     }
@@ -1377,6 +1416,7 @@ createApp({
         apply_remap:       t("ui.preflight.stage_apply_remap"),
         optimize:          t("ui.preflight.stage_optimize"),
         layer:             t("ui.preflight.stage_layer"),
+        print_prefs:       t("ui.preflight.stage_print_prefs"),
         rewrite:           t("ui.preflight.stage_rewrite"),
         inject_auto_load:  t("ui.preflight.stage_inject_auto_load"),
         upload:            t("ui.preflight.stage_upload"),
@@ -1463,6 +1503,7 @@ createApp({
       await reloadState();
       await reloadSnapshots();
       await loadConfig();
+      await loadMaterials();
       await loadNotifications();
       await refreshDebugState();
       await refreshPlugins();

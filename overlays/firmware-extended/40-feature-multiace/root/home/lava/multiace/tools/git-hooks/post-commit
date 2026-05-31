@@ -37,8 +37,6 @@ TRACKED_FILES=(
     "multiace/klipper/extras/filament_switch_sensor_ace.py"
     "multiace/klipper/kinematics/extruder_ace.py"
     "multiace/config/extended/ace.cfg"
-    "multiace/tools/multiace_v2d.py"
-    "multiace/tools/multiace_v2d.init"
 )
 
 # Files that go into MULTIACE_BUNDLE_SHA1 (ace.py excluded - its state
@@ -48,7 +46,6 @@ BUNDLE_FILES=(
     "multiace/klipper/extras/filament_feed_ace.py"
     "multiace/klipper/extras/filament_switch_sensor_ace.py"
     "multiace/klipper/kinematics/extruder_ace.py"
-    "multiace/config/extended/ace.cfg"
 )
 
 # Must run from repo root

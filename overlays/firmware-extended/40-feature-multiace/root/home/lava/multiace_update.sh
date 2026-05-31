@@ -176,7 +176,22 @@ cmd_apply() {
         esac
         shift
     done
-    if [ "$(id -u)" -ne 0 ]; then
+    # Only require elevation if the install targets are not actually writable
+    # by the current user. install_multiace.sh chowns the klipper extras and
+    # kinematics dirs to the printer_data owner (lava) on a root install, so
+    # the lava-spawned web service can apply updates directly. The U1 has no
+    # sudo, and a hard "must be root" check broke the web-update path on SSH
+    # installs even though the dirs were already writable as lava. Test
+    # writability first; fall back to the sudo re-exec only when genuinely
+    # not writable (kept for setups where the dirs stay root-owned).
+    EXTRAS_DIR="$(dirname "$ACE_PY")"
+    KINEMATICS_DIR="$(dirname "$EXTRAS_DIR")/kinematics"
+    NEED_ELEVATION=0
+    [ -w "$EXTRAS_DIR" ] || NEED_ELEVATION=1
+    if [ -d "$KINEMATICS_DIR" ] && [ ! -w "$KINEMATICS_DIR" ]; then
+        NEED_ELEVATION=1
+    fi
+    if [ "$NEED_ELEVATION" -eq 1 ] && [ "$(id -u)" -ne 0 ]; then
         SUDO_BIN=""
         for c in /usr/bin/sudo /bin/sudo /usr/local/bin/sudo; do
             if [ -x "$c" ]; then SUDO_BIN="$c"; break; fi
@@ -185,10 +200,10 @@ cmd_apply() {
             SUDO_BIN="sudo"
         fi
         if [ -n "$SUDO_BIN" ]; then
-            echo "STATUS: re-execing as root via $SUDO_BIN (klipper extras dir is root-owned)"
+            echo "STATUS: re-execing as root via $SUDO_BIN (klipper extras dir not writable)"
             exec "$SUDO_BIN" -n "$0" apply ${FORCE:+--force} ${KEEP_WEB:+--keep-web} $INSTALL_WEB_FLAG
         else
-            echo "ERROR: must run as root - klipper extras dir is not writable as $(id -un); sudo not found" >&2
+            echo "ERROR: klipper extras dir ($EXTRAS_DIR) not writable as $(id -un) and sudo not found - re-run install_multiace.sh as root to fix ownership" >&2
             return 1
         fi
     fi

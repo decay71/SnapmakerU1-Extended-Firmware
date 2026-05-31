@@ -54,11 +54,48 @@ OVERRIDE_FILE = os.environ.get(
     "MULTIACE_OVERRIDE_FILE",
     "/home/lava/printer_data/config/extended/multiace/slot_overrides.json",
 )
+MATERIALS_FILE = os.environ.get(
+    "MULTIACE_MATERIALS_FILE",
+    "/home/lava/printer_data/config/extended/multiace/materials.json",
+)
+# Built-in fallback / seed. The live list comes from MATERIALS_FILE, which is
+# created from this on first access if missing - so it works regardless of how
+# multiACE was deployed (ssh install copies it; bin install relies on this
+# seed). Users edit materials.json to extend the list; updates don't touch it.
+DEFAULT_MATERIALS = [
+    "PLA", "PLA+", "PLA-CF",
+    "PETG", "PETG-CF", "PETG-HF",
+    "ABS", "ASA",
+    "TPU",
+    "PA", "PA-CF", "PA-GF", "PA6-CF", "PA6-GF",
+    "PC", "PC-ABS",
+    "PVA",
+]
 I18N_DIR = os.environ.get(
     "MULTIACE_I18N_DIR",
     str((Path(__file__).resolve().parent.parent / "i18n")),
 )
 SCREEN_PROBE_URL = os.environ.get("SCREEN_PROBE_URL", "http://127.0.0.1:8092/snapshot")
+
+# 0003 mitigation: ace.py (the Klipper module) touches this tmpfs flag on
+# every homing/probe move. While the flag is fresh we pause our periodic
+# Moonraker polling so the web's I/O load doesn't evict klippy code pages
+# during the ~50ms homing-probe window (which made toolhead e3 miss the
+# trsync window -> "Communication timeout during homing" on eMMC-overlay
+# SSH installs). TTL covers the gap between consecutive bed-mesh probe
+# points; a stale flag (klippy crashed mid-home) is ignored after it.
+HOMING_FLAG_PATH = os.environ.get(
+    "MULTIACE_HOMING_FLAG", "/tmp/multiace_homing_active")
+HOMING_GATE_TTL = float(os.environ.get("MULTIACE_HOMING_GATE_TTL", "2.0"))
+
+def _homing_active() -> bool:
+    """True if ace.py signalled an in-progress homing/probe move recently
+    (flag mtime within TTL). Best-effort; any error -> not gating."""
+    try:
+        age = time.time() - os.path.getmtime(HOMING_FLAG_PATH)
+    except OSError:
+        return False
+    return 0.0 <= age < HOMING_GATE_TTL
 
 PLUGIN_PORT_RANGE = os.environ.get("MULTIACE_PLUGIN_PORTS", "8089-8098")
 PLUGIN_DISCOVERY_TTL = float(os.environ.get("MULTIACE_PLUGIN_TTL", "30"))
@@ -850,6 +887,24 @@ def _stage_progress(state: dict, base: float, span: float):
         state["ts"] = time.time()
     return cb
 
+_PRINT_PREFS_LINE = ("SET_PRINT_PREFERENCES BED_LEVEL=0 "
+                     "FLOW_CALIBRATE=0 TIME_LAPSE_CAMERA=0")
+
+def _prepend_print_prefs(in_path: str, out_path: str) -> None:
+    """Stream-copy in_path to out_path with the print-preference line
+    prepended at the very top (before the start gcode's calibration).
+    Any SET_PRINT_PREFERENCES the slicer already emits is commented out
+    so it can't override ours from further down the file."""
+    with open(out_path, "w", encoding="utf-8", errors="replace") as out:
+        out.write("; multiACE preflight: print preferences\n")
+        out.write(_PRINT_PREFS_LINE + "\n")
+        with open(in_path, "r", encoding="utf-8", errors="replace") as src:
+            for line in src:
+                if line.lstrip().upper().startswith("SET_PRINT_PREFERENCES"):
+                    out.write("; multiACE disabled: " + line.lstrip())
+                    continue
+                out.write(line)
+
 def _prune_old_jobs() -> None:
     now = time.time()
     dead = [j for j, s in _PREFLIGHT_JOBS.items()
@@ -864,7 +919,8 @@ def _prune_old_jobs() -> None:
         del _PREFLIGHT_JOBS[j]
 
 async def _run_preflight_pipeline(job_id: str, token: str, mode: str,
-                                  safe_name: str) -> None:
+                                  safe_name: str,
+                                  set_prefs: bool = False) -> None:
     state = _PREFLIGHT_JOBS[job_id]
     pp = _load_post_processor()
     src = _PREFLIGHT_DIR / (token + ".gcode")
@@ -969,6 +1025,12 @@ async def _run_preflight_pipeline(job_id: str, token: str, mode: str,
         )
         cur, nxt = nxt, cur
 
+        if set_prefs:
+            _set_stage(state, "print_prefs", 84.0)
+            await asyncio.to_thread(
+                _prepend_print_prefs, str(cur), str(nxt))
+            cur, nxt = nxt, cur
+
         _set_stage(state, "upload", 85.0)
         with open(cur, "rb") as fh:
             files = {"file": (safe_name, fh, "application/octet-stream")}
@@ -1003,6 +1065,7 @@ async def _run_preflight_pipeline(job_id: str, token: str, mode: str,
 class _PreflightPrint(BaseModel):
     token: str
     mode:  str
+    set_prefs: bool = False
 
 @app.post("/api/preflight/print")
 async def preflight_print(req: _PreflightPrint) -> dict:
@@ -1031,7 +1094,7 @@ async def preflight_print(req: _PreflightPrint) -> dict:
         "ts":       time.time(),
     }
     asyncio.create_task(_run_preflight_pipeline(
-        job_id, req.token, req.mode, safe_name))
+        job_id, req.token, req.mode, safe_name, req.set_prefs))
     return {"job_id": job_id, "filename": safe_name, "mode": req.mode}
 
 @app.get("/api/preflight/print/status")
@@ -2186,6 +2249,31 @@ async def plugin_api_gcode(req: _PluginGcode) -> dict:
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"moonraker: {e}")
 
+@app.get("/api/materials")
+async def get_materials() -> dict:
+    """Return the user-editable filament material list. Seeds the file from
+    DEFAULT_MATERIALS on first access if it doesn't exist, so it works no
+    matter how multiACE was installed."""
+    p = Path(MATERIALS_FILE)
+    try:
+        if p.exists():
+            data = json.loads(p.read_text(encoding="utf-8"))
+            mats = data.get("materials") if isinstance(data, dict) else data
+            if isinstance(mats, list) and mats:
+                return {"materials": [str(m) for m in mats]}
+        else:
+            # Best-effort seed so the user has a file to edit.
+            try:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(json.dumps({"materials": DEFAULT_MATERIALS},
+                                        indent=2, ensure_ascii=False),
+                             encoding="utf-8")
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return {"materials": DEFAULT_MATERIALS}
+
 @app.websocket("/ws")
 async def ws(websocket: WebSocket) -> None:
     """
@@ -2214,7 +2302,10 @@ async def ws(websocket: WebSocket) -> None:
                     except Exception:
                         return
                     last_seen_notif_id = n["id"]
-            if now - last_ts >= 1.0:
+            if now - last_ts >= 1.0 and not _homing_active():
+                # Skip the Moonraker query while a homing/probe move is in
+                # progress (0003 gate). The dashboard just pauses updates
+                # for the brief homing window; it resumes on the next tick.
                 try:
                     status = await _query_state()
                     payload = _parse_state(status)

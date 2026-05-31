@@ -1487,21 +1487,20 @@ class FilamentFeed:
                     self._set_channel_state(ch, FEED_STA_LOAD_FLUSHING)
                     try:
                         self.toolhead.wait_moves()
-                        self.gcode.run_script_from_command("INNER_FLUSH_FILAMENT TEMP=%d SOFT=%d NOZZLE_DIAMETER=%f\r\n" %
-                                            (filament_feed_temp, int(filament_soft), self.toolhead.get_extruder().nozzle_diameter))
+                        # Pass LENGTH= only when a purge length is configured
+                        # (swap_purge_length / Pro override); 0 omits it so the
+                        # stock macro uses its default (80mm).
+                        _purge_len = self.ace.get_purge_length() if self.ace else 0
+                        _flush_cmd = ("INNER_FLUSH_FILAMENT TEMP=%d SOFT=%d NOZZLE_DIAMETER=%f" %
+                                      (filament_feed_temp, int(filament_soft),
+                                       self.toolhead.get_extruder().nozzle_diameter))
+                        if _purge_len and _purge_len > 0:
+                            _flush_cmd += " LENGTH=%d" % _purge_len
+                        self.gcode.run_script_from_command(_flush_cmd + "\r\n")
                         self.toolhead.wait_moves()
                     except:
                         self.channel_error[ch] = FEED_ERR_CUSTOM_GCODE
                         raise ValueError('custom gcode error!')
-
-                    extra_purge = getattr(self.ace, 'extra_purge_length', 0) if self.ace else 0
-                    if extra_purge > 0:
-                        try:
-                            self.gcode.run_script_from_command(
-                                "G1 E%.1f F300\r\n" % extra_purge)
-                            self.toolhead.wait_moves()
-                        except Exception as e:
-                            logging.warning('[multiACE] extra_purge_length extrusion failed: %s' % str(e))
 
                     self.channel_error[ch] = FEED_OK
                     self._set_channel_state(ch, FEED_STA_LOAD_FINISH, True)
@@ -1658,6 +1657,25 @@ class FilamentFeed:
                             raise ValueError('custom gcode error!')
 
                         if self.ace is not None:
+                            # Swap unloads are immediately followed by a load,
+                            # and the forward-probe (G1 E10) after each retract
+                            # needs the hotend above min_extrude_temp.
+                            # INNER_FILAMENT_UNLOAD's cold-pull just dropped the
+                            # heater target to 0; a slow or long retract then
+                            # cools it below the extrude threshold before the
+                            # probe runs. The probe then fails, the runout
+                            # sensor is never confirmed, the retry pulls a
+                            # second full retract (filament fully out of the
+                            # ACE), and the following load lands on a cold
+                            # hotend -> pause that cannot resume. Re-heat now
+                            # (non-blocking) so the retract doubles as the
+                            # warm-up window: the probe runs hot and the load
+                            # finds the hotend ready. Swap-only: standalone
+                            # unloads end cold by design and have no following
+                            # load to protect.
+                            if getattr(self.ace, '_swap_in_progress', False):
+                                self.gcode.run_script_from_command(
+                                    "M104 S%d\r\n" % filament_feed_temp)
                             head_idx = self.filament_ch[ch]
                             source = self.ace._head_source.get(head_idx)
                             if source and source['ace_index'] != self.ace._active_device_index:
@@ -1786,6 +1804,25 @@ class FilamentFeed:
                             raise ValueError('custom gcode error!')
 
                         if self.ace is not None:
+                            # Swap unloads are immediately followed by a load,
+                            # and the forward-probe (G1 E10) after each retract
+                            # needs the hotend above min_extrude_temp.
+                            # INNER_FILAMENT_UNLOAD's cold-pull just dropped the
+                            # heater target to 0; a slow or long retract then
+                            # cools it below the extrude threshold before the
+                            # probe runs. The probe then fails, the runout
+                            # sensor is never confirmed, the retry pulls a
+                            # second full retract (filament fully out of the
+                            # ACE), and the following load lands on a cold
+                            # hotend -> pause that cannot resume. Re-heat now
+                            # (non-blocking) so the retract doubles as the
+                            # warm-up window: the probe runs hot and the load
+                            # finds the hotend ready. Swap-only: standalone
+                            # unloads end cold by design and have no following
+                            # load to protect.
+                            if getattr(self.ace, '_swap_in_progress', False):
+                                self.gcode.run_script_from_command(
+                                    "M104 S%d\r\n" % filament_feed_temp)
                             head_idx = self.filament_ch[ch]
                             source = self.ace._head_source.get(head_idx)
                             if source and source['ace_index'] != self.ace._active_device_index:
@@ -2166,8 +2203,6 @@ class FilamentFeed:
         msg = None
 
         logging.info("[feed] FEED_AUTO %s", gcmd.get_raw_command_parameters())
-        filament_entangle_detect = self.printer.lookup_object(
-                f'filament_entangle_detect e{self.filament_ch[channel]}_filament', None)
         machine_state_manager = self.printer.lookup_object('machine_state_manager', None)
         if machine_state_manager is not None:
             machine_sta = machine_state_manager.get_status()
@@ -2230,8 +2265,6 @@ class FilamentFeed:
                     else:
                         self.gcode.run_script_from_command("SET_MAIN_STATE MAIN_STATE=AUTO_LOAD ACTION=AUTO_LOADING")
                     self.toolhead.wait_moves()
-                if filament_entangle_detect is not None:
-                    filament_entangle_detect.skip_entangle_check(True)
                 self._do_feed(channel, FEED_ACT_LOAD)
                 logging.info(
                     "[feed][load] channel[%d] _do_feed returned: state=%s error=%s error_state=%s sensor=%s",
@@ -2251,8 +2284,6 @@ class FilamentFeed:
                 if self._is_keep_raw_error_info(self.channel_error[channel]):
                     raise
             finally:
-                if filament_entangle_detect is not None:
-                    filament_entangle_detect.skip_entangle_check(False)
                 if machine_state_manager is not None:
                     machine_sta = machine_state_manager.get_status()
                     if str(machine_sta["main_state"]) == "PRINTING":
@@ -2335,8 +2366,6 @@ class FilamentFeed:
 
         if need_to_unload == True:
             try:
-                if filament_entangle_detect is not None:
-                    filament_entangle_detect.skip_entangle_check(True)
                 if machine_state_manager is not None:
                     machine_sta = machine_state_manager.get_status()
                     if str(machine_sta["main_state"]) == "PRINTING":
@@ -2364,10 +2393,6 @@ class FilamentFeed:
                             self.gcode.run_script_from_command("SET_ACTION_CODE ACTION=IDLE")
                         else:
                             self.gcode.run_script_from_command("SET_MAIN_STATE MAIN_STATE=IDLE ACTION=IDLE")
-            finally:
-                if filament_entangle_detect is not None:
-                    filament_entangle_detect.skip_entangle_check(False)
-
             if self.channel_error[channel] != FEED_OK:
                 msg = 'extruder[%d]: state: %s, error: %s!' % (
                         self.filament_ch[channel],
@@ -2402,8 +2427,6 @@ class FilamentFeed:
 
         logging.info("[feed] FEED_MANUAL %s", gcmd.get_raw_command_parameters())
 
-        filament_entangle_detect = self.printer.lookup_object(
-                f'filament_entangle_detect e{self.filament_ch[channel]}_filament', None)
         machine_state_manager = self.printer.lookup_object('machine_state_manager', None)
         if machine_state_manager is not None:
             machine_sta = machine_state_manager.get_status()
@@ -2412,8 +2435,6 @@ class FilamentFeed:
                                  % (channel, str(machine_sta["main_state"])))
 
         try:
-            if filament_entangle_detect is not None:
-                filament_entangle_detect.skip_entangle_check(True)
             if machine_state_manager is not None:
                 machine_sta = machine_state_manager.get_status()
                 if str(machine_sta["main_state"]) != "PRINTING":
@@ -2435,9 +2456,6 @@ class FilamentFeed:
                     machine_sta = machine_state_manager.get_status()
                     if str(machine_sta["main_state"]) != "PRINTING":
                         self.gcode.run_script_from_command("SET_MAIN_STATE MAIN_STATE=IDLE ACTION=IDLE")
-        finally:
-            if filament_entangle_detect is not None:
-                filament_entangle_detect.skip_entangle_check(False)
 
         if self.channel_error[channel] != FEED_OK:
             msg = 'extruder[%d]: state: %s, error: %s!' % (

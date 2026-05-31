@@ -246,7 +246,11 @@
           <label>{{ t('ui.config.swap_retract_length') }}</label>
           <input type="number" v-model.number="configForm.swap_retract_length"
                  min="0" max="2000" step="1" placeholder="900">
-          <span class="muted small">{{ t('ui.config.swap_retract_length_hint') }}</span>
+        </div>
+        <div class="config-row">
+          <label>Swap purge length</label>
+          <input type="number" v-model.number="configForm.swap_purge_length"
+                 min="0" max="200" step="1" placeholder="0">
         </div>
         <div class="config-row">
           <label>{{ t('ui.config.dryer_temp') }}</label>
@@ -261,6 +265,13 @@
           <select v-model.number="configForm.display_index_base">
             <option :value="0">0</option>
             <option :value="1">1</option>
+          </select>
+        </div>
+        <div class="config-row">
+          <label>ACE 2 order</label>
+          <select v-model="configForm.v2_order">
+            <option value="first">before ACE 1</option>
+            <option value="last">after ACE 1</option>
           </select>
         </div>
         <div class="config-row">
@@ -322,6 +333,12 @@
                      min="0" max="5000" step="10" placeholder="-"> mm
             </label>
           </div>
+          <div class="per-ace-row">
+            <label>{{ t('ui.config.swap_retract_length') }}
+              <input type="number" v-model.number="configForm.perAce[i-1].swap_retract_length"
+                     min="0" max="2000" step="10" placeholder="-"> mm
+            </label>
+          </div>
           <details class="per-slot-block">
             <summary>{{ t('ui.config.per_slot_overrides') }}</summary>
             <table class="per-slot-table">
@@ -330,6 +347,7 @@
                   <th>Slot</th>
                   <th>{{ t('ui.config.load_length') }}</th>
                   <th>{{ t('ui.config.retract_length') }}</th>
+                  <th>{{ t('ui.config.swap_retract_length') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -339,6 +357,8 @@
                              min="0" max="5000" step="10" placeholder="-"></td>
                   <td><input type="number" v-model.number="configForm.perAce[i-1].perSlot[s-1].retract_length"
                              min="0" max="5000" step="10" placeholder="-"></td>
+                  <td><input type="number" v-model.number="configForm.perAce[i-1].perSlot[s-1].swap_retract_length"
+                             min="0" max="2000" step="10" placeholder="-"></td>
                 </tr>
               </tbody>
             </table>
