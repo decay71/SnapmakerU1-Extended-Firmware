@@ -19,7 +19,7 @@ KNOWN_PROTOCOLS = (AceProtocolV1, AceProtocolV2)
 MULTIACE_VERSION = "0.97.2b"
 MULTIACE_CODENAME = "Kindred Allies"
 
-MULTIACE_BUILD_TAG = "cdd7bae-dirty"
+MULTIACE_BUILD_TAG = "6a53b35-dirty"
 MULTIACE_BUNDLE_SHA1 = "444b732"
 
 def _load_i18n_catalog(i18n_dir, lang):
