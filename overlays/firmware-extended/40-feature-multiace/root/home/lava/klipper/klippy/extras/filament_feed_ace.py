@@ -1487,9 +1487,6 @@ class FilamentFeed:
                     self._set_channel_state(ch, FEED_STA_LOAD_FLUSHING)
                     try:
                         self.toolhead.wait_moves()
-                        # Pass LENGTH= only when a purge length is configured
-                        # (swap_purge_length / Pro override); 0 omits it so the
-                        # stock macro uses its default (80mm).
                         _purge_len = self.ace.get_purge_length() if self.ace else 0
                         _flush_cmd = ("INNER_FLUSH_FILAMENT TEMP=%d SOFT=%d NOZZLE_DIAMETER=%f" %
                                       (filament_feed_temp, int(filament_soft),
@@ -1657,22 +1654,6 @@ class FilamentFeed:
                             raise ValueError('custom gcode error!')
 
                         if self.ace is not None:
-                            # Swap unloads are immediately followed by a load,
-                            # and the forward-probe (G1 E10) after each retract
-                            # needs the hotend above min_extrude_temp.
-                            # INNER_FILAMENT_UNLOAD's cold-pull just dropped the
-                            # heater target to 0; a slow or long retract then
-                            # cools it below the extrude threshold before the
-                            # probe runs. The probe then fails, the runout
-                            # sensor is never confirmed, the retry pulls a
-                            # second full retract (filament fully out of the
-                            # ACE), and the following load lands on a cold
-                            # hotend -> pause that cannot resume. Re-heat now
-                            # (non-blocking) so the retract doubles as the
-                            # warm-up window: the probe runs hot and the load
-                            # finds the hotend ready. Swap-only: standalone
-                            # unloads end cold by design and have no following
-                            # load to protect.
                             if getattr(self.ace, '_swap_in_progress', False):
                                 self.gcode.run_script_from_command(
                                     "M104 S%d\r\n" % filament_feed_temp)
@@ -1804,22 +1785,6 @@ class FilamentFeed:
                             raise ValueError('custom gcode error!')
 
                         if self.ace is not None:
-                            # Swap unloads are immediately followed by a load,
-                            # and the forward-probe (G1 E10) after each retract
-                            # needs the hotend above min_extrude_temp.
-                            # INNER_FILAMENT_UNLOAD's cold-pull just dropped the
-                            # heater target to 0; a slow or long retract then
-                            # cools it below the extrude threshold before the
-                            # probe runs. The probe then fails, the runout
-                            # sensor is never confirmed, the retry pulls a
-                            # second full retract (filament fully out of the
-                            # ACE), and the following load lands on a cold
-                            # hotend -> pause that cannot resume. Re-heat now
-                            # (non-blocking) so the retract doubles as the
-                            # warm-up window: the probe runs hot and the load
-                            # finds the hotend ready. Swap-only: standalone
-                            # unloads end cold by design and have no following
-                            # load to protect.
                             if getattr(self.ace, '_swap_in_progress', False):
                                 self.gcode.run_script_from_command(
                                     "M104 S%d\r\n" % filament_feed_temp)

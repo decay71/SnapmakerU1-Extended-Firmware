@@ -19,8 +19,8 @@ KNOWN_PROTOCOLS = (AceProtocolV1, AceProtocolV2)
 MULTIACE_VERSION = "0.97.2b"
 MULTIACE_CODENAME = "Kindred Allies"
 
-MULTIACE_BUILD_TAG = "6a53b35-dirty"
-MULTIACE_BUNDLE_SHA1 = "444b732"
+MULTIACE_BUILD_TAG = "efe1bbc-dirty"
+MULTIACE_BUNDLE_SHA1 = "d27478b"
 
 def _load_i18n_catalog(i18n_dir, lang):
     """Read <i18n_dir>/<lang>.json overlaid on en.json. Returns a dict
@@ -74,15 +74,6 @@ GATE_UNKNOWN = -1
 GATE_EMPTY = 0
 GATE_AVAILABLE = 1
 
-# Seconds to keep V1 feed-assist dispatches out of the homing/probe
-# window. A V1 start_feed_assist is a synchronous ser.write on the
-# reactor thread; if it lands during a probe move (rtscts backpressure
-# while the ACE gearbox is busy) it stalls the reactor long enough to
-# trip the toolhead MCU's "Communication timeout during homing"
-# (exception id 528). We defer the dispatch while a homing move is
-# active and for this long after the last one ends, so it only fires
-# in a real gap. V2 writes go through a background writer thread and
-# never block the reactor, so they are never gated.
 FA_HOMING_SETTLE = 0.5
 
 class MultiAce:
@@ -137,11 +128,6 @@ class MultiAce:
         self.feed_speed = config.getint('feed_speed', 50)
         self.retract_speed = config.getint('retract_speed', 50)
         self.retract_length = config.getint('retract_length', 100)
-        # When enabled, an ACE 2 (V2) unwind waits for the device to report
-        # the retract finished (slot leaves 'rollback' -> device 'ready',
-        # i.e. its own feed-port sensor cleared) instead of a fixed-length
-        # time dwell. retract_length then acts as a safety upper bound.
-        # V1 devices ignore this and keep the time-based behavior.
         self.ace2_sensor_unload = config.getboolean('ace2_sensor_unload', False)
 
         self.feed_length = config.getint('feed_length', 0)
@@ -150,15 +136,7 @@ class MultiAce:
         self.load_retry = config.getint('load_retry', 3)              
         self.load_retry_retract = config.getint('load_retry_retract', 50)  
         self.max_dryer_temperature = config.getint('max_dryer_temperature', 55)
-        # Deprecated: extra_purge_length used to extrude extra filament AFTER
-        # the stock flush (additive only, could not reduce poop). No longer
-        # applied - kept here so existing configs don't error. Use
-        # swap_purge_length to control the flush volume instead.
         self.extra_purge_length = config.getfloat('extra_purge_length', 0, minval=0, maxval=200)
-        # Flush/purge length (mm) passed to the stock INNER_FLUSH_FILAMENT as
-        # LENGTH= at each swap/load flush. 0 = use the stock default (80mm).
-        # Lower it to reduce purge waste ("poop"). multiACE Pro can override
-        # it per swap (e.g. per colour-pair) via ACE_SET_PURGE.
         self.swap_purge_length = config.getint('swap_purge_length', 0, minval=0, maxval=200)
 
         self.seat_overshoot_length = config.getint('seat_overshoot_length', 0, minval=0, maxval=100)
@@ -217,7 +195,6 @@ class MultiAce:
             rl = ace_sec.getint('retract_length', None, minval=1)
             if rl is not None:
                 self._ace_section_retract_length[ace_i] = rl
-            # swap_retract_length override allows 0 (= use default retract).
             srl = ace_sec.getint('swap_retract_length', None, minval=0, maxval=2000)
             if srl is not None:
                 self._ace_section_swap_retract_length[ace_i] = srl
@@ -258,17 +235,6 @@ class MultiAce:
         self._fa_load_disable = _parse_idx_list('fa_load_disable')
         self.fa_debug = config.getboolean('fa_debug', False)
 
-        # 0003 mitigation - homing-gate flag for the web daemon.
-        # Root cause: on SSH installs klippy runs from the writable eMMC
-        # overlay (copy-up), not the RAM-cached squashfs. The web's
-        # Moonraker polling adds I/O pressure that evicts klippy code
-        # pages; a major page fault in the ~50ms homing-probe window makes
-        # e3 miss the trsync window -> "Communication timeout during
-        # homing". ace.py touches this tmpfs flag on every homing move;
-        # the standalone web daemon checks its mtime and pauses its
-        # periodic /printer/objects/query while homing is active, taking
-        # the I/O pressure off the probe window. tmpfs (RAM) so the
-        # reactor-thread write is cheap and never hits eMMC.
         self._homing_flag_path = config.get(
             'homing_flag_path', '/tmp/multiace_homing_active')
 
@@ -279,27 +245,12 @@ class MultiAce:
                                            'last': 'last'},
                                           'usb')
 
-        # V2 print-time feed-assist mode:
-        #   'constant' (default) - on extrusion just keep the ACE feed
-        #     assist running (forward); only flip to unwind on a sustained
-        #     reverse. No per-tick speed tracking -> the ACE pushes gently
-        #     and the filament follows the extruder's pull (no bowden
-        #     tension from the controller lagging the demand).
-        #   'tracked' - legacy: continuously quantize live_extruder_velocity
-        #     and push update_feeding_speed (can lag fast accel -> bowden
-        #     flexes when the extruder pulls faster than the ACE supplies).
         self._v2_print_assist_mode = config.getchoice(
             'v2_print_assist_mode',
             {'constant': 'constant', 'tracked': 'tracked'},
             'constant')
-        # Fixed feed speed (mm/s) sent ONCE when assist starts in constant
-        # mode. 0 = leave the ACE firmware's own default (most hakimio-like;
-        # the ACE decides). >0 = pin this speed once, never update again.
         self._v2_constant_assist_speed = config.getint(
             'v2_constant_assist_speed', 0, minval=0, maxval=50)
-        # Direction-confirmation window (s): in constant mode a reverse
-        # extruder velocity must persist this long before we flip the ACE
-        # to unwind, so brief slicer retracts don't cause mode churn.
         self._v2_assist_confirm_time = config.getfloat(
             'v2_assist_confirm_time', 0.5, minval=0.0, maxval=5.0)
 
@@ -389,14 +340,10 @@ class MultiAce:
         self._auto_feed_enabled = False
         self._fa_context = 'idle'
 
-        # Homing/probe in-progress tracking (set from homing:* events).
-        # Used to defer V1 FA dispatches out of probe windows.
         self._homing_active = False
         self._last_homing_end = 0.0
 
         self._retract_length_override = None
-        # Per-swap flush length override (set by multiACE Pro / a setter
-        # command). None = fall back to the swap_purge_length config value.
         self._purge_length_override = None
 
         self._last_unload_ok = True
@@ -511,13 +458,6 @@ class MultiAce:
         self.printer.register_event_handler('print_stats:start', self._on_print_start)
         self.printer.register_event_handler('print_stats:stop', self._on_print_end)
 
-        # Every homing move (G28 axis home AND each probe sample via
-        # probing_move) is bracketed by these events; the inductance-coil
-        # bed-mesh / z-offset / flow-cal probes all go through
-        # HomingMove.homing_move(). We use them to keep V1 FA dispatches
-        # out of the probe window regardless of the Snapmaker action_code
-        # (bed-mesh probes run under action_code IDLE, so action_code
-        # gating alone would miss them).
         self.printer.register_event_handler(
             'homing:homing_move_begin', self._on_homing_move_begin)
         self.printer.register_event_handler(
@@ -800,8 +740,6 @@ class MultiAce:
                 s.close()
 
         def _evict(sig):
-            # fuser may not exist on this firmware; pkill always does and
-            # matches our 'python3 -m uvicorn main:app ...' command line.
             for cmd in (['fuser', '-k', '-%s' % sig, port_spec],
                         ['pkill', '-%s' % sig, '-f', 'uvicorn.*main:app']):
                 try:
@@ -920,9 +858,6 @@ class MultiAce:
                          self._WEB_INITD)
             return
         if self._web_port_busy():
-            # Something already serves :7126. If it is our own old
-            # klippy-child, replace it; otherwise (S98 root daemon from
-            # boot) leave it running untouched.
             if self._kill_own_klippy_web():
                 for _ in range(20):
                     if not self._web_port_busy():
@@ -934,9 +869,6 @@ class MultiAce:
                              self._web_port)
                 self.log_always(self._t('msg.web_running'))
                 return
-        # Port is free -> start the standalone daemon. Run via 'sh' so it
-        # works even if the init script is root-only (-rwx------): ace.py
-        # runs as lava and can't exec it directly, but sh can read+run it.
         import subprocess
         try:
             subprocess.run(['sh', self._WEB_INITD, 'start'],
@@ -2120,10 +2052,6 @@ class MultiAce:
     def _on_homing_move_end(self, hmove):
         self._homing_active = False
         self._last_homing_end = self.reactor.monotonic()
-        # Keep the flag fresh through the end of the move; the web daemon
-        # expires it on its own short TTL, so one touch per begin/end
-        # covers bed mesh (which fires begin/end per probe point in quick
-        # succession).
         self._touch_homing_flag()
 
     def _v1_fa_blocked_by_homing(self, idx):
@@ -2283,10 +2211,6 @@ class MultiAce:
             return start_callback
 
         def _send_start():
-            # Keep the synchronous V1 write out of any homing/probe
-            # window (see FA_HOMING_SETTLE). Re-defer until the probe
-            # sequence has a gap; during a print there are no homing
-            # moves so this never delays normal FA arming.
             if self._v1_fa_blocked_by_homing(idx):
                 self._fa_trace(
                     'FA start deferred (homing active/recent): ACE %d slot %d'
@@ -2855,12 +2779,6 @@ class MultiAce:
                     '[v2-vel] ace=%d slot=%d %s vel=%+.2f q=%d dir=%s (hb)' % (
                         idx, armed_slot, armed_status, v, quantum, direction))
 
-            # Constant-assist mode (default): don't track/quantize the
-            # extruder velocity at all. Once assisting, let the ACE keep
-            # feeding (forward); only flip to unwind when a reverse
-            # velocity is sustained past the confirm window. This stops
-            # the controller from lagging fast extruder accel (which made
-            # the bowden flex when the extruder out-pulled the ACE).
             if (self._v2_print_assist_mode == 'constant'
                     and armed_status in ('assisting', 'rollback_assisting')):
                 cdisp = state.setdefault('cdispatch', {
@@ -2869,8 +2787,6 @@ class MultiAce:
                     'cand_since': eventtime,
                     'speed_pinned': False,
                 })
-                # Pin a fixed speed once, if configured (>0). 0 leaves the
-                # ACE firmware default untouched.
                 if (not cdisp['speed_pinned']
                         and self._v2_constant_assist_speed > 0):
                     cdisp['speed_pinned'] = True
@@ -2886,7 +2802,6 @@ class MultiAce:
                     except Exception as e:
                         self._fa_log.info(
                             '[v2-vel] constant pin enqueue failed: %s' % e)
-                # Direction confirm: require sustained reverse before flip.
                 if direction != cdisp['cand_dir']:
                     cdisp['cand_dir'] = direction
                     cdisp['cand_since'] = eventtime
@@ -3446,12 +3361,6 @@ class MultiAce:
             self.dwell(delay=(length / speed) + 0.1)
 
     def _wait_unwind_sensor(self, idx, slot, length, speed):
-        # ACE 2 retracts autonomously until its feed-port sensor clears.
-        # The host observes this as the slot leaving 'rollback'/'feeding'
-        # and the device returning to 'ready'. The commanded length is only
-        # an upper bound here, so wait for the real completion rather than a
-        # fixed time. Falls back to a length/speed time budget if the status
-        # never settles (e.g. device firmware that doesn't report rollback).
         budget = (length / float(speed)) + 5.0
         deadline = time.monotonic() + budget
 
@@ -3463,10 +3372,6 @@ class MultiAce:
             ss = slots[slot].get('slot_status') if slot < len(slots) else None
             return info.get('status'), ss
 
-        # Phase 1: wait until the device acknowledges the rollback (goes
-        # busy / slot enters rollback) so a stale 'ready' from before the
-        # command landed doesn't end the wait immediately. Bounded so a
-        # near-instant clear doesn't hang here.
         busy_deadline = time.monotonic() + 2.0
         while time.monotonic() < busy_deadline:
             dev, ss = _state()
@@ -3476,8 +3381,6 @@ class MultiAce:
                 break
             self.reactor.pause(self.reactor.monotonic() + 0.1)
 
-        # Phase 2: wait until the slot returns to idle (port cleared) or the
-        # upper-bound time budget elapses.
         while True:
             dev, ss = _state()
             if dev is None:
@@ -4896,16 +4799,6 @@ class MultiAce:
             logging.info('[multiACE] Swap: HEAD %d already on ACE %d / Slot %d - skipping' % (
                 head, ace_index, slot))
 
-            # Only (re)heat when this head is the active toolhead. A real
-            # mid-print swap-back onto an already-loaded head is always
-            # preceded by a T<head> (post_process rewrite() emits
-            # "T%d\nACE_SWAP_HEAD ..."), so the head is active and needs
-            # extrusion heat. Pre-print head-picking, by contrast, calls
-            # ACE_SWAP_HEAD for every loaded head with no T in between
-            # (inject_auto_load emits bare swaps), leaving the active
-            # toolhead unchanged - heating those would needlessly hold
-            # idle heads at load_temp for the whole print (and stall the
-            # print start ~20-30s per head on TEMPERATURE_WAIT).
             try:
                 active_ext = self.toolhead.get_extruder().get_name()
                 active_head = (0 if active_ext == 'extruder'
@@ -6712,9 +6605,6 @@ class MultiAce:
             'gate_status': self.gate_status,
             'active_device': self._active_device_index,
             'device_count': len(self._ace_devices),
-            # str keys: 1.4's status encoder rejects non-str dict keys
-            # ("Dict key must be str"). The web backend reads both str and
-            # int keys, so this is backward-compatible.
             'head_source': {str(k): v for k, v in self._head_source.items()},
             'swap_in_progress': self._swap_in_progress,
             'aces': aces,
