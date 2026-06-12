@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 
 import sys, re, os, json
 import urllib.request, urllib.error
@@ -254,22 +253,18 @@ def match_colors_to_slots(color_names, live_slots, num_heads=4,
     leaving T1 (DarkBlue) - which would have matched exact_hex -
     stuck on a worse tier.
 
-    Tier order:
-      Within slicer's material:
+    Tier order (every tier stays within the slicer head's material —
+    a different material is never substituted, even on fallback):
         1.  exact_hex                            every T tried
         2.  name_exact                           every T tried (skip if strict_color)
         3.  name_base   ('DarkRed' -> 'Red')     every T tried (skip if strict_color)
         4.  name_canon  (synonym table)          every T tried (skip if strict_color)
         5.  fuzzy RGB distance                   every T tried (skip if strict_color
                                                  or fuzzy_max_distance is None)
-      Material filter dropped:
-        6.  exact_hex                            → tier='loose_exact_hex'
-        7.  name_exact                           → tier='loose_name_exact'
-        8.  name_base                            → tier='loose_name_base'
-        9.  name_canon                           → tier='loose_name_canon'
-       10.  fuzzy                                → tier='loose_fuzzy'
-      Last resort:
-       11.  any unclaimed slot                   → tier='fallback'
+      Last resort (still material-matched):
+        6.  any unclaimed slot of the same material  → tier='fallback'
+        7.  share an already-claimed same-material slot → tier='duplicate'
+        8.  nothing available                    → tier='no_slot'
 
     A slot is claimed once and removed from contention. T-indices
     whose matched physical slot equals their slicer index are
@@ -278,7 +273,7 @@ def match_colors_to_slots(color_names, live_slots, num_heads=4,
     Returns (remap, info, used_slots) where info[t_idx] = {
       'tier':       str   (see tier list above, or 'no_slot'),
       'slot':       dict  (the matched live_slot, or None),
-      'loose_mat':  bool  (True for loose_* and fallback-when-different-material),
+      'loose_mat':  bool  (always False; kept for API compatibility),
     }."""
     filament_types = filament_types or {}
 
@@ -387,6 +382,7 @@ def match_colors_to_slots(color_names, live_slots, num_heads=4,
         if tier_name == 'fuzzy' and fuzzy_max_distance is None:
             continue
         _match_pass(tier_name, True, pred)
+
 
     for t in list(pending):
         tm = t_meta[t]

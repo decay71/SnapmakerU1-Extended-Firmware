@@ -58,10 +58,6 @@ MATERIALS_FILE = os.environ.get(
     "MULTIACE_MATERIALS_FILE",
     "/home/lava/printer_data/config/extended/multiace/materials.json",
 )
-# Built-in fallback / seed. The live list comes from MATERIALS_FILE, which is
-# created from this on first access if missing - so it works regardless of how
-# multiACE was deployed (ssh install copies it; bin install relies on this
-# seed). Users edit materials.json to extend the list; updates don't touch it.
 DEFAULT_MATERIALS = [
     "PLA", "PLA+", "PLA-CF",
     "PETG", "PETG-CF", "PETG-HF",
@@ -77,13 +73,6 @@ I18N_DIR = os.environ.get(
 )
 SCREEN_PROBE_URL = os.environ.get("SCREEN_PROBE_URL", "http://127.0.0.1:8092/snapshot")
 
-# 0003 mitigation: ace.py (the Klipper module) touches this tmpfs flag on
-# every homing/probe move. While the flag is fresh we pause our periodic
-# Moonraker polling so the web's I/O load doesn't evict klippy code pages
-# during the ~50ms homing-probe window (which made toolhead e3 miss the
-# trsync window -> "Communication timeout during homing" on eMMC-overlay
-# SSH installs). TTL covers the gap between consecutive bed-mesh probe
-# points; a stale flag (klippy crashed mid-home) is ignored after it.
 HOMING_FLAG_PATH = os.environ.get(
     "MULTIACE_HOMING_FLAG", "/tmp/multiace_homing_active")
 HOMING_GATE_TTL = float(os.environ.get("MULTIACE_HOMING_GATE_TTL", "2.0"))
@@ -700,7 +689,6 @@ def _build_plan(pp, plan_name, body, result, mapping,
                 c2h, slicer_colors, slicer_types),
         }
 
-    # plan_name == "layer"
     layer_info = result.get("layer_info") or {}
     layer_color_sets_raw = layer_info.get("layer_color_sets") or []
     layer_color_sets = [set(s) for s in layer_color_sets_raw]
@@ -966,11 +954,6 @@ async def _run_preflight_pipeline(job_id: str, token: str, mode: str,
         if missing_mats:
             raise RuntimeError(
                 "required material(s) not loaded: " + ", ".join(missing_mats))
-        # Mode dispatch:
-        #   slicer  - matcher.apply_remap, runs against currently-loaded slots
-        #   optimize / layer - swap-aware free head assignment; user is
-        #                     expected to physically arrange spools to the
-        #                     displayed positions before clicking print.
         if mode == "slicer":
             remap, _info, _ = pp.match_colors_to_slots(
                 slicer_colors, live_slots, num_heads=4,
@@ -1175,10 +1158,6 @@ def _read_update_cfg() -> dict[str, str]:
 async def _run_update_script(args: list[str], timeout: float) -> dict:
     """Exec the bundled multiace_update.sh and capture stdout+rc."""
 
-    # Canonical install location first. The PAXX-baked
-    # /home/lava/multiace/tools/multiace_update.sh comes from the
-    # squashfs and never gets refreshed by online updates, so it
-    # serves only as a last-resort fallback.
     update_script = None
     for candidate in (
         "/home/lava/multiace_update.sh",
@@ -1423,14 +1402,6 @@ async def run_macro(req: MacroRequest) -> dict:
             parts.append(f"{k}={v}")
     script = " ".join(parts)
     try:
-        # Moonraker's /printer/gcode/script blocks until Klipper finishes
-        # the gcode. Returns immediately on completion regardless of
-        # timeout value; the timeout only fires if Klipper truly hangs
-        # (e.g. MCU disconnect, deadlock). ACE_SWITCH TARGET=N AUTOLOAD=1
-        # = full unload + load cycle (~14 min observed); worst-case
-        # retry storm on a stuck slot can push toward 25 min. 1800s
-        # gives margin for the worst case while still catching real
-        # hangs.
         result = await _mr_post("/printer/gcode/script",
                                 {"script": script}, timeout=1800.0)
     except httpx.HTTPStatusError as e:
@@ -2262,7 +2233,6 @@ async def get_materials() -> dict:
             if isinstance(mats, list) and mats:
                 return {"materials": [str(m) for m in mats]}
         else:
-            # Best-effort seed so the user has a file to edit.
             try:
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(json.dumps({"materials": DEFAULT_MATERIALS},
@@ -2303,9 +2273,6 @@ async def ws(websocket: WebSocket) -> None:
                         return
                     last_seen_notif_id = n["id"]
             if now - last_ts >= 1.0 and not _homing_active():
-                # Skip the Moonraker query while a homing/probe move is in
-                # progress (0003 gate). The dashboard just pauses updates
-                # for the brief homing window; it resumes on the next tick.
                 try:
                     status = await _query_state()
                     payload = _parse_state(status)

@@ -1,0 +1,59 @@
+#!/bin/sh
+# Sync multiACE tools (e.g. post_process_virtual_toolheads.py) from the
+# squashfs bundle into the user-facing printer_data/config/tools/ path
+# on boot. install_multiace.sh (SSH-install path) puts these files there;
+# PAXX-baked firmware ships them only at /home/lava/multiace/tools/, which
+# isn't visible in Fluidd's web file browser and confuses users who follow
+# the slicer-post-process docs.
+#
+# PAXX's S49extended-config only mirrors /usr/local/share/firmware-config/
+# extended/ into printer_data/config/extended/ — anything outside that
+# subfolder is ignored. So we cannot rely on the firmware-config staging
+# mechanism for these files. This hook fills the gap.
+#
+# Logic per boot:
+#   1. If the bundle dir is missing, no-op.
+#   2. mkdir -p the destination.
+#   3. cp -n any .py files that aren't already there. User edits and
+#      older versions are preserved — to update, the user deletes the
+#      file (or moves it) and reboots.
+#
+# This runs before S60klipper but its content is independent of Klipper —
+# the script position only matters for ordering relative to other multiACE
+# hooks. S57 sits between S55multiace-cfg-refresh / S56multiace-trsync and
+# S58multiace-mode.
+
+SRC_DIR=/home/lava/multiace/tools
+DST_DIR=/home/lava/printer_data/config/tools
+LOG_TAG="multiace-tools"
+
+log() { logger -t "$LOG_TAG" "$1"; }
+
+start() {
+    if [ ! -d "$SRC_DIR" ]; then
+        log "bundle dir $SRC_DIR missing — skip"
+        return 0
+    fi
+    mkdir -p "$DST_DIR" 2>/dev/null || true
+    copied=0
+    for src in "$SRC_DIR"/*.py; do
+        [ -f "$src" ] || continue
+        base=$(basename "$src")
+        if [ ! -e "$DST_DIR/$base" ]; then
+            cp "$src" "$DST_DIR/$base" 2>/dev/null && copied=$((copied + 1))
+        fi
+    done
+    chown -R lava:lava "$DST_DIR" 2>/dev/null || true
+    if [ "$copied" -gt 0 ]; then
+        log "synced $copied file(s) to $DST_DIR"
+    fi
+}
+
+case "$1" in
+    start|"")    start ;;
+    stop)        ;;
+    restart)     start ;;
+    *)           echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+
+exit 0
