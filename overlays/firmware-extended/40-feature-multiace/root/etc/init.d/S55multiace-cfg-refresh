@@ -33,11 +33,6 @@ start() {
     if [ -f "$ACE_MARKER" ]; then
         old_hash="$(head -n1 "$ACE_MARKER" 2>/dev/null | tr -d '[:space:]')"
     fi
-    if [ -z "$old_hash" ]; then
-        write_marker "$new_hash"
-        log "marker initialised ($new_hash) - ace.cfg left untouched"
-        return 0
-    fi
     if [ "$old_hash" = "$new_hash" ]; then
         return 0
     fi
@@ -62,9 +57,9 @@ start() {
     chown lava:lava "$ACE_CFG" 2>/dev/null
     write_marker "$new_hash"
     if [ "$merged_ok" -eq 1 ]; then
-        log "shipped default changed ($old_hash -> $new_hash) - merged user values (backup: $backup)"
+        log "cfg refresh ($old_hash -> $new_hash) - merged user values (backup: $backup)"
     else
-        log "shipped default changed ($old_hash -> $new_hash) - clean refresh (backup: $backup)"
+        log "cfg refresh ($old_hash -> $new_hash) - clean refresh (backup: $backup)"
     fi
 }
 case "$1" in
