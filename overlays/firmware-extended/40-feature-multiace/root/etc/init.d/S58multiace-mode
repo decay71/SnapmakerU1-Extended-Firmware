@@ -12,7 +12,7 @@ start() {
         [ -n "$m" ] && mode="$m"
     fi
     case "$mode" in
-        multi|single)
+        multi|single|head)
             logger -t multiace-mode "applying mode swap: $mode -> ace"
             bash "$SWITCH_SCRIPT" ace >/dev/null 2>&1 \
                 && logger -t multiace-mode "swap ok" \
