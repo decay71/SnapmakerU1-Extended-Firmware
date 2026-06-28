@@ -1,6 +1,6 @@
 # SnapmakerU1-Extended-Firmware (decay71 fork)
 
-PAXX-based firmware for the Snapmaker U1 with **multiACE 0.97b "Kindred Allies" Hotfix 1** pre-installed (Anycubic ACE Pro V1 + V2 / ACE 2 support, web UI, online updater).
+PAXX-based firmware for the Snapmaker U1 with **multiACE 0.99.2  ** pre-installed (Anycubic ACE Pro V1 + V2 / ACE 2 support, web UI, online updater).
 
 This repository contains the **firmware source code only**, provided to satisfy the GPL-3.0 Corresponding-Source requirement (§6(d)).
 
