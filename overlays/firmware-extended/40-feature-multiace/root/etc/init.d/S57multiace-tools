@@ -14,9 +14,13 @@
 # Logic per boot:
 #   1. If the bundle dir is missing, no-op.
 #   2. mkdir -p the destination.
-#   3. cp -n any .py files that aren't already there. User edits and
-#      older versions are preserved — to update, the user deletes the
-#      file (or moves it) and reboots.
+#   3. For each shipped .py: copy if missing, OR REFRESH (overwrite, after a
+#      timestamped backup) when the bundle's md5 differs from the destination.
+#      These are SHIPPED ARTIFACTS, not user config: the old cp -n no-clobber
+#      left a stale post_process_virtual_toolheads.py across a PAXX-bin upgrade
+#      while the squashfs backend ran fresh -> head-mode preflight called a new
+#      function the stale tool lacked -> AttributeError/HTTP 500. md5 refresh
+#      keeps the canonical printer_data copy in sync (backup kept just in case).
 #
 # This runs before S60klipper but its content is independent of Klipper —
 # the script position only matters for ordering relative to other multiACE
@@ -28,6 +32,10 @@ DST_DIR=/home/lava/printer_data/config/tools
 LOG_TAG="multiace-tools"
 
 log() { logger -t "$LOG_TAG" "$1"; }
+hash_of() {
+    [ -f "$1" ] || { echo ""; return; }
+    md5sum "$1" 2>/dev/null | awk '{print $1}'
+}
 
 start() {
     if [ ! -d "$SRC_DIR" ]; then
@@ -36,16 +44,24 @@ start() {
     fi
     mkdir -p "$DST_DIR" 2>/dev/null || true
     copied=0
+    refreshed=0
     for src in "$SRC_DIR"/*.py; do
         [ -f "$src" ] || continue
         base=$(basename "$src")
-        if [ ! -e "$DST_DIR/$base" ]; then
-            cp "$src" "$DST_DIR/$base" 2>/dev/null && copied=$((copied + 1))
+        dst="$DST_DIR/$base"
+        if [ ! -e "$dst" ]; then
+            cp "$src" "$dst" 2>/dev/null && copied=$((copied + 1))
+            continue
+        fi
+        if [ "$(hash_of "$src")" != "$(hash_of "$dst")" ]; then
+            ts=$(date -u '+%Y%m%d-%H%M%S')
+            cp "$dst" "$dst.bak.$ts" 2>/dev/null
+            cp "$src" "$dst" 2>/dev/null && refreshed=$((refreshed + 1))
         fi
     done
     chown -R lava:lava "$DST_DIR" 2>/dev/null || true
-    if [ "$copied" -gt 0 ]; then
-        log "synced $copied file(s) to $DST_DIR"
+    if [ "$copied" -gt 0 ] || [ "$refreshed" -gt 0 ]; then
+        log "tools sync: $copied new, $refreshed refreshed in $DST_DIR"
     fi
 }
 

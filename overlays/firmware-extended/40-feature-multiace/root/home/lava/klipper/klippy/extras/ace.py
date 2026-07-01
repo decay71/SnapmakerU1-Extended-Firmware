@@ -21,7 +21,7 @@ MULTIACE_CODENAME = "Persistent Pesterers"
 
 ACE_API_VERSION = 1
 
-MULTIACE_BUILD_TAG = "1af6a41"
+MULTIACE_BUILD_TAG = "2d89ee5"
 MULTIACE_BUNDLE_SHA1 = "1f491ef"
 
 def _load_i18n_catalog(i18n_dir, lang):
