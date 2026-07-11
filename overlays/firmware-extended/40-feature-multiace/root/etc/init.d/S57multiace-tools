@@ -11,16 +11,24 @@
 # subfolder is ignored. So we cannot rely on the firmware-config staging
 # mechanism for these files. This hook fills the gap.
 #
-# Logic per boot:
+# Logic per boot (md5-MARKER, mirroring S55multiace-cfg-refresh):
 #   1. If the bundle dir is missing, no-op.
 #   2. mkdir -p the destination.
-#   3. For each shipped .py: copy if missing, OR REFRESH (overwrite, after a
-#      timestamped backup) when the bundle's md5 differs from the destination.
-#      These are SHIPPED ARTIFACTS, not user config: the old cp -n no-clobber
-#      left a stale post_process_virtual_toolheads.py across a PAXX-bin upgrade
-#      while the squashfs backend ran fresh -> head-mode preflight called a new
-#      function the stale tool lacked -> AttributeError/HTTP 500. md5 refresh
-#      keeps the canonical printer_data copy in sync (backup kept just in case).
+#   3. For each shipped .py: copy if the dest is missing. Otherwise REFRESH
+#      (overwrite, after a .bak backup) ONLY when the BUNDLE's md5 differs from
+#      the marker we stored at the last sync (= the firmware was re-baked with a
+#      newer tool). A mere dest!=bundle diff does NOT trigger a refresh.
+#
+# Why marker-tracked and not bundle-vs-dest: the bundle at SRC_DIR is baked into
+# the (read-only) squashfs, but printer_data is the CANONICAL copy that an SSH
+# install / online update keeps current (§17/§21) - it can be NEWER than the
+# baked bundle. A plain bundle-vs-dest refresh clobbered an SSH-installed newer
+# tool with the older baked bundle on every reboot. Tracking the bundle's own
+# md5 means we only push when the bundle itself changes (a new bake), so a newer
+# SSH copy survives reboots, AND a real bin upgrade (new bundle) still refreshes
+# a stale printer_data copy (the original preflight-500 fix). Missing marker ->
+# treat as changed (first run / pre-marker firmware) so a genuinely stale copy
+# is still fixed; from the next boot the marker exists and SSH copies persist.
 #
 # This runs before S60klipper but its content is independent of Klipper —
 # the script position only matters for ordering relative to other multiACE
@@ -49,14 +57,19 @@ start() {
         [ -f "$src" ] || continue
         base=$(basename "$src")
         dst="$DST_DIR/$base"
+        marker="$DST_DIR/.$base.bundle.md5"
+        src_md5="$(hash_of "$src")"
         if [ ! -e "$dst" ]; then
             cp "$src" "$dst" 2>/dev/null && copied=$((copied + 1))
+            printf '%s\n' "$src_md5" > "$marker" 2>/dev/null
             continue
         fi
-        if [ "$(hash_of "$src")" != "$(hash_of "$dst")" ]; then
+        old_md5="$(head -n1 "$marker" 2>/dev/null | tr -d '[:space:]')"
+        if [ "$old_md5" != "$src_md5" ]; then
             ts=$(date -u '+%Y%m%d-%H%M%S')
             cp "$dst" "$dst.bak.$ts" 2>/dev/null
             cp "$src" "$dst" 2>/dev/null && refreshed=$((refreshed + 1))
+            printf '%s\n' "$src_md5" > "$marker" 2>/dev/null
         fi
     done
     chown -R lava:lava "$DST_DIR" 2>/dev/null || true
